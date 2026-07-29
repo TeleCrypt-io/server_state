@@ -29,14 +29,17 @@ jobs:
           docker compose --env-file .env.example config --quiet
 
       - name: Validate Caddy
-        run: docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+        run: |
+          docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 
-      - name: Test Synapse policy module
+      - name: Verify pinned Synapse policy module image
+        # A server PR is opened before the coordinated controlplane release exists. The
+        # controlplane PR builds/tests this target; server verifies the published exact tag on
+        # main/tag runs after the owner creates the release.
+        if: github.event_name != 'pull_request'
         run: >-
           docker run --rm
-          --volume "$PWD/synapse/modules:/modules"
-          --workdir /modules/tier_controller
-          --entrypoint sh
-          ghcr.io/dotwee/matrix-synapse-s3:v1.155.0
-          -c 'python -m pip install --disable-pip-version-check pytest==9.0.2 pytest-asyncio==1.4.0 &&
-          python -m pytest -q test_tier_controller.py'
+          --entrypoint python
+          ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.0
+          -c 'from tier_controller import TierController; print(TierController.__name__)'

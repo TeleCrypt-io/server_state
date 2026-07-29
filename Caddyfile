@@ -114,7 +114,8 @@ http://backend.telecrypt.io {
 		respond "Method Not Allowed" 405
 	}
 
-	# Plan tab + team billing → cashier
+	# Plan tab + team billing → cashier. Dodo card data is entered only on the provider-hosted
+	# checkout page; TeleCrypt receives signed webhook events at the final path.
 	@cashier path /plan /plan/* /api/team /api/team/* /webhooks/dodo
 	handle @cashier {
 		reverse_proxy cashier:9011

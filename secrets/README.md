@@ -20,3 +20,5 @@ same test-billing `CONTROLPLANE_DB_URL`: cashier writes billing/manual-grant pro
 janitor reads it before locking accounts. `BILLING_ENV=test` must match the exact Dodo test origin.
 Both processes permanently bind that database to the billing and Matrix deployment identities, so
 a future live-billing release must use a different control-plane database and live-only credentials.
+Keep the deprecated `TELECRYPT_ENV=test` alias in cashier's file while server `0.2.1` remains the
+recorded rollback target; the new release ignores it, but the prior cashier requires it.

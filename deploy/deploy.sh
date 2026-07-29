@@ -88,6 +88,8 @@ check_secrets() {
   local cashier_db locker_db
   [ "$(env_value BILLING_ENV "$SECRETS/cashier.secrets.env")" = test ] ||
     die "cashier.secrets.env must explicitly set BILLING_ENV=test for this release"
+  [ "$(env_value TELECRYPT_ENV "$SECRETS/cashier.secrets.env")" = test ] ||
+    die "cashier.secrets.env must retain TELECRYPT_ENV=test while 0.2.1 is a rollback target"
   [ "$(env_value DODO_API_BASE "$SECRETS/cashier.secrets.env")" = https://test.dodopayments.com ] ||
     die "cashier.secrets.env must select the exact Dodo test API origin for this release"
   cashier_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/cashier.secrets.env")"

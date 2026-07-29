@@ -38,5 +38,5 @@ jobs:
           --workdir /modules/tier_controller
           --entrypoint sh
           ghcr.io/dotwee/matrix-synapse-s3:v1.155.0
-          -c 'python -m pip install --disable-pip-version-check pytest==9.0.2 &&
+          -c 'python -m pip install --disable-pip-version-check pytest==9.0.2 pytest-asyncio==1.4.0 &&
           python -m pytest -q test_tier_controller.py'

@@ -5,8 +5,8 @@
 # branch, resets a working tree, reads secret values, or changes host-side ingress.
 set -euo pipefail
 
-REPO="${TELECRYPT_REPO:-$HOME/telecrypt-server}"
-DATA="${TELECRYPT_DATA:-$HOME/.local/share/telecrypt}"
+REPO="${TELECRYPT_REPO:-$HOME/server}"
+DATA="${TELECRYPT_DATA:-$HOME/persistent_data}"
 SECRETS="$DATA/secrets"
 STATE="$DATA/deploy-state"
 ENV_FILE="${TELECRYPT_ENV_FILE:-$REPO/.env}"

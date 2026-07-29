@@ -35,9 +35,17 @@ Copy `.env.example` to an untracked `.env` in the deployment checkout and set th
 secret directory, ingress bind address, and exact trusted-proxy CIDR. The release preflight uses
 that server-only file even while validating a candidate tag in an isolated worktree.
 
-By default `deploy.sh` expects the checkout and persistent-data locations used by the
-existing service. For a different host layout, set `TELECRYPT_REPO` and `TELECRYPT_DATA`
-in the operator's environment before invoking it.
+By default `deploy.sh` uses `$HOME/server` and `$HOME/persistent_data`. For a different host
+layout, set `TELECRYPT_REPO` and `TELECRYPT_DATA` in the operator's environment.
+
+Install the scheduled janitor as a rootless user unit:
+
+```bash
+install -d -m 700 "$HOME/.config/systemd/user"
+install -m 644 deploy/janitor.service deploy/janitor.timer "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now janitor.timer
+```
 
 ## First release
 
@@ -45,7 +53,7 @@ in the operator's environment before invoking it.
 2. From a clean checkout on the deployment host, run:
 
    ```bash
-   deploy/deploy.sh release v1.0.0
+   deploy/deploy.sh release 0.2.0
    ```
 
 3. Verify the public endpoints and the authenticated application flow using the private

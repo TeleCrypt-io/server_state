@@ -5,7 +5,7 @@ deployment host never follows `main`, performs a hard reset, or receives a push 
 CI. This keeps a running version explicit and makes rollback a deliberate action.
 
 ```bash
-deploy/deploy.sh release v1.0.0
+deploy/deploy.sh release 0.2.0
 ```
 
 Before changing the running stack, the script:
@@ -31,7 +31,7 @@ deploy/deploy.sh rollback
 Or select a known tag explicitly:
 
 ```bash
-deploy/deploy.sh rollback v1.0.0
+deploy/deploy.sh rollback 0.2.0
 ```
 
 If health checks fail, the script leaves the failure visible and prints an exact

@@ -135,6 +135,8 @@ services:
     entrypoint: ["/janitor"]
     environment:
       - RUN_ONCE=1
+      - BILLING_ENV=test
+      - MATRIX_DEPLOYMENT_ID=production
       - SERVER_NAME=telecrypt.io
       - MAS_BASE_URL=http://mas:8080
       - EXCLUDE_MXIDS=@cashier_admin:telecrypt.io
@@ -150,9 +152,6 @@ services:
   # ── cashier: Plan tab, team/seat billing, Dodo webhooks, Synapse verified unlock. ─────────────
   cashier:
     image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.0
-    # Production billing is intentionally disabled until a separately reviewed live-billing
-    # release. The isolated test override replaces this with its billing-test profile.
-    profiles: ["billing-production"]
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net ]

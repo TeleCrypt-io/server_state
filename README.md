@@ -25,43 +25,26 @@ docker compose ps
 ```
 
 `telecrypt.io` serves Matrix discovery and redirects ordinary web traffic to `www.telecrypt.io`.
-Matrix, MAS, and registration endpoints live at `backend.telecrypt.io`. Production billing is
-disabled in the base stack until a separately reviewed live-billing release.
+Matrix, MAS, registration, and Plan endpoints live at `backend.telecrypt.io`.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress.
 
-## Isolated billing sandbox
+## Billing mode
 
-The Dodo test flow is a complete, separate Matrix deployment—not a test cashier attached to the
-production-shaped Matrix stack. It uses `test.telecrypt.io` / `backend.test.telecrypt.io`, separate
-Synapse and MAS state, a separate signing key and media bucket/prefix, separate MAS/OIDC clients,
-and one shared test-only control-plane database for both cashier and janitor. Sharing that one
-test-only database is required so janitor sees paid and manual grants; it is never shared with
-production.
+The production Matrix deployment currently uses Dodo's test environment while live billing is
+unavailable. `BILLING_ENV=test` is explicit, the Dodo API origin is the exact test origin, and MAS
+shows the Plan page at `https://backend.telecrypt.io/plan`. The Plan page displays a sandbox banner
+and Dodo's test-card instructions; card data is entered only on Dodo's hosted checkout page.
 
-Copy `.env.billing-test.example` to an untracked `.env.billing-test`. Populate a new secrets
-directory from the `*.billing-test.example.*` templates (renaming them to the ordinary runtime
-filenames), create a separate Synapse signing key, and use a separate data directory. Then validate
-the merged stack:
+Cashier and janitor must use the same `CONTROLPLANE_DB_URL`. Both bind that database permanently to
+`BILLING_ENV=test` and `MATRIX_DEPLOYMENT_ID=production` before serving or sweeping. A future live
+billing release must use a different database; changing keys or environment variables cannot
+silently reuse the test-billing state.
 
-```sh
-docker compose --project-name telecrypt-billing-test \
-  --env-file .env.billing-test \
-  -f compose.yml -f compose.billing-test.yml \
-  --profile billing-test config --quiet
-
-docker compose --project-name telecrypt-billing-test \
-  --env-file .env.billing-test \
-  -f compose.yml -f compose.billing-test.yml \
-  --profile billing-test run --rm caddy \
-  caddy validate --config /etc/caddy/Caddyfile
-```
-
-Before starting it, the owner must manually provision DNS and the upstream TLS/HAProxy routes for
-both test hostnames and point the Dodo test-product webhook at
-`https://backend.test.telecrypt.io/webhooks/dodo`. Do not reuse production databases, credentials,
-products, webhooks, signing keys, media storage, or accounts. Start/deploy this override with its
-own reviewed procedure; the production-oriented `deploy/deploy.sh` is intentionally not used.
+Configure the Dodo test-product webhook as
+`https://backend.telecrypt.io/webhooks/dodo`. Switching to live billing requires a separately
+reviewed immutable release, live-only keys/product/webhook, `BILLING_ENV=production`, and a new
+control-plane database.
 
 ## Releases
 

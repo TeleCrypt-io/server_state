@@ -64,7 +64,7 @@ http://telecrypt.io {
 	}
 }
 
-# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + redpill) ──────────────────────
+# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + redpill + cashier) ────────────
 http://backend.telecrypt.io {
 	log
 	import security_headers
@@ -112,6 +112,13 @@ http://backend.telecrypt.io {
 	handle @redpill_other_method {
 		header Allow "POST"
 		respond "Method Not Allowed" 405
+	}
+
+	# Plan tab + team billing → cashier. Dodo card data is entered only on the provider-hosted
+	# checkout page; TeleCrypt receives signed webhook events at the final path.
+	@cashier path /plan /plan/* /api/team /api/team/* /webhooks/dodo
+	handle @cashier {
+		reverse_proxy cashier:9011
 	}
 
 	# Future: LiveKit JWT service (staged off until VoIP wiring — see compose.yml lkjwt service)

@@ -28,25 +28,9 @@ jobs:
           cp secrets/cashier.secrets.example.env "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
           docker compose --env-file .env.example config --quiet
 
-      - name: Validate isolated billing-test Compose
-        env:
-          TELECRYPT_SECRETS_DIR: /tmp/telecrypt-billing-test-secrets
-          TELECRYPT_DATA_DIR: /tmp/telecrypt-billing-test-data
-        run: |
-          mkdir -p "$TELECRYPT_SECRETS_DIR" "$TELECRYPT_DATA_DIR"
-          cp secrets/locker.billing-test.example.env "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
-          cp secrets/cashier.billing-test.example.env "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
-          docker compose --project-name telecrypt-billing-test \
-            --env-file .env.billing-test.example \
-            -f compose.yml -f compose.billing-test.yml \
-            --profile billing-test config --quiet
-
       - name: Validate Caddy
         run: |
           docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
-          docker run --rm --volume "$PWD/Caddyfile.billing-test:/etc/caddy/Caddyfile:ro" \
-            --env TRUSTED_PROXY=127.0.0.1/32 \
             docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 
       - name: Verify pinned Synapse policy module image

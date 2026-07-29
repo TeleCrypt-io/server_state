@@ -58,6 +58,16 @@ check_mode() {
     die "unexpected mode on $path (need $expected; found $actual)"
 }
 
+env_value() {
+  local key="$1" file="$2"
+  awk -v wanted="$key" '
+    index($0, wanted "=") == 1 {
+      print substr($0, length(wanted) + 2)
+      exit
+    }
+  ' "$file"
+}
+
 check_secrets() {
   local required=(
     synapse.secrets.yaml
@@ -74,6 +84,17 @@ check_secrets() {
     [ -f "$SECRETS/$name" ] || die "required secret file is missing: $SECRETS/$name"
     check_mode 600 "$SECRETS/$name"
   done
+
+  local cashier_db locker_db
+  [ "$(env_value BILLING_ENV "$SECRETS/cashier.secrets.env")" = test ] ||
+    die "cashier.secrets.env must explicitly set BILLING_ENV=test for this release"
+  [ "$(env_value DODO_API_BASE "$SECRETS/cashier.secrets.env")" = https://test.dodopayments.com ] ||
+    die "cashier.secrets.env must select the exact Dodo test API origin for this release"
+  cashier_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/cashier.secrets.env")"
+  locker_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/locker.secrets.env")"
+  [ -n "$cashier_db" ] || die "cashier.secrets.env is missing CONTROLPLANE_DB_URL"
+  [ "$cashier_db" = "$locker_db" ] ||
+    die "cashier and janitor must use the same control-plane database"
 }
 
 preflight_release() {
@@ -113,7 +134,9 @@ wait_for_health() {
        curl --fail --silent --show-error --max-time 5 \
          https://backend.telecrypt.io/health >/dev/null &&
        curl --fail --silent --show-error --max-time 5 \
-         https://backend.telecrypt.io/auth/.well-known/openid-configuration >/dev/null; then
+         https://backend.telecrypt.io/auth/.well-known/openid-configuration >/dev/null &&
+       curl --fail --silent --show-error --max-time 5 \
+         https://backend.telecrypt.io/plan >/dev/null; then
       return 0
     fi
     sleep 5

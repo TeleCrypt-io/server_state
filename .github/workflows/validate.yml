@@ -41,5 +41,5 @@ jobs:
         run: >-
           docker run --rm
           --entrypoint python
-          ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.3
+          ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.4
           -c 'from tier_controller import TierController; print(TierController.__name__)'

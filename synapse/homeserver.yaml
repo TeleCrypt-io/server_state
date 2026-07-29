@@ -1,0 +1,70 @@
+# Synapse — committed base config. Contains NO secrets.
+# Secret-bearing top-level keys (database, matrix_authentication_service, media_storage_providers,
+# macaroon_secret_key, form_secret) live WHOLLY in the gitignored secrets file
+# and are merged at runtime via the second `-c` flag.
+
+server_name: "telecrypt.io"
+public_baseurl: "https://backend.telecrypt.io/"
+signing_key_path: "/signing.key"          # provided from persistent_data/secrets (never committed)
+pid_file: /data/homeserver.pid
+log_config: "/log.config"
+
+# Plain HTTP; TLS terminated upstream → Caddy → here. x_forwarded trusts X-Forwarded-* headers.
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client]              # federation resource dropped — federation disabled
+        compress: false
+
+# database:                       -> in synapse.secrets.yaml (host/user/db + password)
+# matrix_authentication_service:  -> in synapse.secrets.yaml (enabled, endpoint http://mas:8080, shared secret)
+# media_storage_providers:        -> in synapse.secrets.yaml (external S3 sss.telecrypt.io + keys)
+# macaroon_secret_key:            -> in synapse.secrets.yaml
+# form_secret:                    -> in synapse.secrets.yaml
+
+# Local media cache dir (S3 is the primary store). Path is the mount root to avoid double-nesting.
+media_store_path: /data
+max_upload_size: 150M
+max_image_pixels: "32M"
+dynamic_thumbnails: false
+
+# Federation fully disabled: empty whitelist = federate with nobody (blocks inbound and outbound).
+# trusted_key_servers kept explicitly empty so Synapse does NOT fall back to the matrix.org default.
+federation_domain_whitelist: []
+trusted_key_servers: []
+
+# Auth is fully delegated to MAS — no local registration or password login in Synapse.
+enable_registration: false
+password_config:
+  enabled: false
+  localdb_enabled: false
+
+report_stats: false
+
+# Custom user type for the inverted tier model (verified vs. everything else).
+# Enforcement is done by the tier_controller module; Synapse just needs to accept this value.
+user_types:
+  extra_user_types:
+    - verified
+
+# Fail-closed capability restrictions for unverified users (uploads, room cap, encryption).
+# Pure-Python, bind-mounted (./synapse/modules -> /modules, on PYTHONPATH), no image rebuild.
+# See server/synapse/modules/tier_controller/ for details.
+modules:
+  - module: tier_controller.TierController
+    config:
+      restricted_room_cap: 3
+
+# Modern client features (Element X / sliding sync / Element Call delay events).
+experimental_features:
+  msc3266_enabled: true     # room summary (knocking over federation)
+  msc4222_enabled: true     # state_after in sync v2
+  msc4108_enabled: true     # QR login
+  msc3575_enabled: true     # sliding sync
+max_event_delay_duration: 24h
+
+# vim:ft=yaml

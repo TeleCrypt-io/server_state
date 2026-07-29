@@ -1,0 +1,76 @@
+# Matrix Authentication Service — committed base config. Contains NO secrets.
+# Secret-bearing top-level keys (secrets, database, matrix) live WHOLLY in the
+# gitignored secrets file, merged at runtime via the second `--config` flag.
+#
+# MAS is served at https://backend.telecrypt.io/auth/ (Caddy stripes the /auth prefix internally).
+# The .well-known/matrix/client on the apex (telecrypt.io) points clients to this issuer.
+
+http:
+  public_base: https://backend.telecrypt.io/auth/
+  issuer: https://backend.telecrypt.io/auth/
+
+  listeners:
+    - name: web
+      resources:
+        - name: discovery
+        - name: human
+        - name: oauth
+        - name: compat
+        - name: graphql
+        - name: assets
+        - name: adminapi       # REST admin API at /api/admin/v1/ (disabled by default)
+      binds:
+        - address: '[::]:8080'
+      proxy_protocol: false
+
+    - name: internal
+      resources:
+        - name: health
+      binds:
+        - host: 0.0.0.0
+          port: 8081
+      proxy_protocol: false
+
+  # Containers and the in-VM proxy communicate over private Docker networks.
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 127.0.0.1/8
+    - ::1/128
+    - fd00::/8
+
+# secrets:         -> in mas.secrets.yaml (encryption + signing keys)
+# database:        -> in mas.secrets.yaml (host postgres_mas + password)
+# matrix:          -> in mas.secrets.yaml (kind synapse, endpoint http://synapse:8008, shared secret)
+
+# Local password accounts with open registration. Email is optional.
+passwords:
+  enabled: true
+
+# redpill has its own per-source and global limiter; MAS sees it as one upstream client.
+rate_limiting:
+  registration:
+    burst: 100
+    per_second: 2.0
+
+account:
+  password_registration_enabled: true
+  registration_token_required: false
+  password_registration_email_required: false  # email optional — see header comment
+  password_change_allowed: true
+  password_recovery_enabled: true              # requires SMTP in mas.secrets.yaml
+  account_deactivation_allowed: false
+  login_with_email_allowed: false
+  email_change_allowed: true
+  displayname_change_allowed: true
+
+experimental:
+  plan_management_iframe_uri: "https://backend.telecrypt.io/plan"
+
+# email:   -> in mas.secrets.yaml (transport + SMTP creds)
+# clients: -> in mas.secrets.yaml (ULID client_ids + client_secrets; ULIDs must match policy below)
+# policy:  -> in mas.secrets.yaml (policy.data.admin_clients references janitor's admin client ULID)
+
+branding:
+  service_name: 'TeleCrypt.io'

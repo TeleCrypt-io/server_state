@@ -1,0 +1,38 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+    tags: ["*.*.*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Validate shell
+        run: bash -n deploy/deploy.sh
+
+      - name: Validate Compose
+        env:
+          TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets
+          TELECRYPT_DATA_DIR: /tmp/telecrypt-data
+        run: docker compose --env-file .env.example config --quiet
+
+      - name: Validate Caddy
+        run: docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
+
+      - name: Test Synapse policy module
+        run: >-
+          docker run --rm
+          --volume "$PWD/synapse/modules:/modules"
+          --workdir /modules/tier_controller
+          --entrypoint sh
+          ghcr.io/dotwee/matrix-synapse-s3:v1.155.0
+          -c 'python -m pip install --disable-pip-version-check pytest==9.0.2 &&
+          python -m pytest -q test_tier_controller.py'

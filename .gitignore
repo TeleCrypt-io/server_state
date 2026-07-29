@@ -1,0 +1,34 @@
+# ── Secrets & runtime state — NEVER commit ───────────────────────────────────
+# Real secrets live only in the operator-selected host secrets directory.
+# This repo carries *.example templates only.
+
+# Environment / compose-level secrets
+.env
+*.env
+!.env.example
+
+# Any real secrets files (only *.example.* may be committed)
+secrets/*
+!secrets/*.example.yaml
+!secrets/*.example.yml
+!secrets/*.example.env
+!secrets/README.md
+
+# Key / identity material (must never leave the host)
+*.key
+*.pem
+*signing.key
+
+# Persistent data (bind-mounted from the host; not part of the repo)
+persistent_data/
+db/
+media_store/
+
+# Logs / runtime
+*.log
+*.pid
+
+# Python test artifacts (server/synapse/modules/tier_controller/ tests)
+__pycache__/
+*.pyc
+.pytest_cache/

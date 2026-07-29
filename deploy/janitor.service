@@ -1,0 +1,14 @@
+[Unit]
+Description=TeleCrypt janitor daily sweep (lock stale unclaimed accounts)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=XDG_RUNTIME_DIR=%t
+Environment=DOCKER_HOST=unix://%t/docker.sock
+WorkingDirectory=%h/server
+ExecStart=/usr/bin/docker compose --env-file %h/server/.env run --rm -e RUN_ONCE=1 janitor
+
+[Install]
+WantedBy=default.target

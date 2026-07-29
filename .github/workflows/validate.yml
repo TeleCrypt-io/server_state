@@ -22,7 +22,11 @@ jobs:
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets
           TELECRYPT_DATA_DIR: /tmp/telecrypt-data
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          mkdir -p "$TELECRYPT_SECRETS_DIR" "$TELECRYPT_DATA_DIR"
+          cp secrets/locker.secrets.example.env "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
+          cp secrets/cashier.secrets.example.env "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
+          docker compose --env-file .env.example config --quiet
 
       - name: Validate Caddy
         run: docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile

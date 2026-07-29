@@ -52,11 +52,11 @@ Runtime images use exact version tags by project policy. Upgrade them deliberate
 See `deploy/README.md` for the exact-release-tag deployment entry point.
 
 The `redpill`, `janitor`, and `cashier` services use
-`ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.2`, while `synapse` uses the matching
-`ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.2` image. Their source, tests, and
+`ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.3`, while `synapse` uses the matching
+`ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.3` image. Their source, tests, and
 Synapse compatibility work belong in `controlplane`; this repository only selects the coordinated
 exact release and configures it. Release both controlplane images before changing these references.
-The server release must remain blocked until both `0.3.2` images are published.
+The server release must remain blocked until both `0.3.3` images are published.
 
 ## Security and licence
 

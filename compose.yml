@@ -41,7 +41,7 @@ services:
     # The policy module is source-baked into this exact controlplane release. Do not replace it
     # with a bind mount or a startup package install: the image is the tested Synapse 1.155.0
     # compatibility boundary.
-    image: ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.2
+    image: ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.3
     container_name: tc_synapse
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -95,7 +95,7 @@ services:
   # registration form over telecrypt_net and mints the agent token via compat login. (morpheus is
   # gone entirely; see the controlplane repo README.) ───────────────────────────────────────────
   redpill:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.2
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.3
     container_name: tc_redpill
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -121,7 +121,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.2
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.3
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -151,7 +151,7 @@ services:
 
   # ── cashier: Plan tab, team/seat billing, Dodo webhooks, Synapse verified unlock. ─────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.2
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.3
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net ]

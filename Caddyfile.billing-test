@@ -1,0 +1,88 @@
+# Isolated full-stack billing sandbox. TLS terminates at the upstream test proxy.
+{
+	auto_https off
+	servers {
+		trusted_proxies static {$TRUSTED_PROXY}
+	}
+}
+
+(security_headers) {
+	header {
+		-Server
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+	}
+}
+
+http://test.telecrypt.io {
+	log
+	import security_headers
+	header /.well-known/matrix/* Content-Type "application/json"
+	header /.well-known/matrix/* Access-Control-Allow-Origin "*"
+	header /.well-known/matrix/* Cache-Control "max-age=3600"
+
+	@well_known_client path /.well-known/matrix/client
+	handle @well_known_client {
+		respond `{
+			"m.homeserver": {"base_url": "https://backend.test.telecrypt.io"},
+			"org.matrix.msc2965.authentication": {
+				"issuer": "https://backend.test.telecrypt.io/auth/",
+				"account": "https://backend.test.telecrypt.io/auth/account"
+			}
+		}`
+	}
+	handle {
+		respond "TeleCrypt billing test" 200
+	}
+}
+
+http://backend.test.telecrypt.io {
+	log
+	import security_headers
+
+	@mas_admin path /auth/api/admin/v1 /auth/api/admin/v1/*
+	handle @mas_admin {
+		respond "Not Found" 404
+	}
+	@synapse_admin path /_synapse /_synapse/*
+	handle @synapse_admin {
+		respond "Not Found" 404
+	}
+
+	@mas_compat path_regexp ^/_matrix/client/(.*)/(login|logout|refresh)
+	handle @mas_compat {
+		reverse_proxy mas:8080
+	}
+	@mas path /auth /auth/*
+	handle @mas {
+		uri strip_prefix /auth
+		reverse_proxy mas:8080
+	}
+	@synapse path_regexp ^(/_matrix|/health)
+	handle @synapse {
+		reverse_proxy synapse:8008
+	}
+
+	@redpill_post {
+		method POST
+		path /redpill
+	}
+	handle @redpill_post {
+		reverse_proxy redpill:9009
+	}
+	@redpill_other_method path /redpill
+	handle @redpill_other_method {
+		header Allow "POST"
+		respond "Method Not Allowed" 405
+	}
+
+	@cashier path /plan /plan/* /api/team /api/team/* /webhooks/dodo
+	handle @cashier {
+		reverse_proxy cashier:9011
+	}
+
+	handle {
+		respond "TeleCrypt billing test backend" 200
+	}
+}

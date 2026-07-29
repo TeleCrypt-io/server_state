@@ -52,8 +52,8 @@ user_types:
     - verified
 
 # Fail-closed capability restrictions for unverified users (uploads, room cap, encryption).
-# Pure-Python, bind-mounted (./synapse/modules -> /modules, on PYTHONPATH), no image rebuild.
-# See server/synapse/modules/tier_controller/ for details.
+# Baked into the exact controlplane-owned Synapse image selected in compose.yml.
+# Its source, tests, and Synapse-version compatibility notes live in controlplane.
 modules:
   - module: tier_controller.TierController
     config:

@@ -64,7 +64,7 @@ http://telecrypt.io {
 	}
 }
 
-# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + redpill + cashier) ────────────
+# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + redpill) ──────────────────────
 http://backend.telecrypt.io {
 	log
 	import security_headers
@@ -112,12 +112,6 @@ http://backend.telecrypt.io {
 	handle @redpill_other_method {
 		header Allow "POST"
 		respond "Method Not Allowed" 405
-	}
-
-	# Plan tab + team billing → cashier
-	@cashier path /plan /plan/* /api/team /api/team/* /webhooks/dodo
-	handle @cashier {
-		reverse_proxy cashier:9011
 	}
 
 	# Future: LiveKit JWT service (staged off until VoIP wiring — see compose.yml lkjwt service)

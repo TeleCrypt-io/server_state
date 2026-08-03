@@ -53,7 +53,7 @@ See `deploy/README.md` for the exact-release-tag deployment entry point.
 
 The `redpill`, `janitor`, and `cashier` services use
 `ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6`, while `synapse` uses the matching
-`ghcr.io/telecrypt-io/telecrypt-synapse:1.155.0-cp.0.3.6-s3.1.6.1-tc.1` image. The image-builder
+`ghcr.io/telecrypt-io/telecrypt-synapse:1.155-tc1` image. The image-builder
 consumes the `controlplane` `0.3.6` tier-controller wheel and the Matrix.org S3 provider; this
 repository only selects the coordinated exact releases and configures them. The server release must
 remain blocked until both referenced images are published.

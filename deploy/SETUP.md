@@ -24,6 +24,7 @@ synapse.secrets.yaml
 synapse_signing.key
 mas.secrets.yaml
 locker.secrets.env
+plan.secrets.env
 cashier.secrets.env
 ```
 

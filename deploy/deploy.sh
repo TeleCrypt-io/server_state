@@ -72,6 +72,7 @@ check_secrets() {
     synapse_signing.key
     mas.secrets.yaml
     locker.secrets.env
+    plan.secrets.env
     cashier.secrets.env
   )
   local name
@@ -93,6 +94,10 @@ check_secrets() {
   cashier_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/cashier.secrets.env")"
   locker_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/locker.secrets.env")"
   [ -n "$cashier_db" ] || die "cashier.secrets.env is missing CONTROLPLANE_DB_URL"
+  [ -n "$(env_value PLAN_ASSERTION_PRIVATE_KEY "$SECRETS/plan.secrets.env")" ] ||
+    die "plan.secrets.env is missing PLAN_ASSERTION_PRIVATE_KEY"
+  [ -n "$(env_value PLAN_ASSERTION_PUBLIC_KEY "$SECRETS/cashier.secrets.env")" ] ||
+    die "cashier.secrets.env is missing PLAN_ASSERTION_PUBLIC_KEY"
   [ "$cashier_db" = "$locker_db" ] ||
     die "cashier and janitor must use the same control-plane database"
 }

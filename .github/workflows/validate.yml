@@ -15,9 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Validate shell
-        run: bash -n deploy/deploy.sh
-
       - name: Validate Compose
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets

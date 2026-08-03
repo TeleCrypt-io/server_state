@@ -1,4 +1,4 @@
-# TeleCrypt.io server
+# TeleCrypt.io server state
 
 Public runtime configuration for the TeleCrypt Matrix service:
 
@@ -6,7 +6,7 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - A controlplane-owned, exact-version Synapse policy-module image.
 - Matrix Authentication Service (MAS / MSC3861).
 - Caddy HTTP ingress behind an external TLS terminator.
-- TeleCrypt control-plane services (`redpill`, `janitor`, and `cashier`).
+- TeleCrypt control-plane services (`redpill`, `janitor`, and `steward`) plus private Cashier.
 - External PostgreSQL and S3-backed encrypted media.
 
 ## Configure
@@ -48,15 +48,13 @@ control-plane database.
 
 ## Releases
 
-Runtime images use exact version tags by project policy. Upgrade them deliberately after testing.
-See `deploy/README.md` for the exact-release-tag deployment entry point.
+This repository publishes no container packages, binaries, wheels, or other build artifacts.
+Every reviewed change merged to `main` is eligible for one immutable declarative-state release:
+an annotated Git tag and GitHub Release record whose notes identify the configuration change.
+The deployment host consumes only those exact tags. See `deploy/README.md`.
 
-The `redpill`, `janitor`, and `cashier` services use
-`ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6`, while `synapse` uses the matching
-`ghcr.io/telecrypt-io/telecrypt-synapse:1.155-tc1` image. The image-builder
-consumes the `controlplane` `0.3.6` tier-controller wheel and the Matrix.org S3 provider; this
-repository only selects the coordinated exact releases and configures them. The server release must
-remain blocked until both referenced images are published.
+It selects, but never builds, exact component releases. A server_state release must remain blocked
+until every referenced component image/release is already published and verified.
 
 ## Security and licence
 

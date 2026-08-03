@@ -33,13 +33,12 @@ jobs:
           docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 
-      - name: Verify pinned Synapse policy module image
-        # A server PR is opened before the coordinated controlplane release exists. The
-        # controlplane PR builds/tests this target; server verifies the published exact tag on
-        # main/tag runs after the owner creates the release.
+      - name: Verify pinned standalone Synapse image
+        # A server PR is opened before the coordinated component releases exist. The image-builder
+        # workflow tests this target; server verifies the published exact tag on main/tag runs.
         if: github.event_name != 'pull_request'
         run: >-
           docker run --rm
           --entrypoint python
-          ghcr.io/telecrypt-io/telecrypt-synapse-tier-controller:0.3.4
+          ghcr.io/telecrypt-io/telecrypt-synapse:1.155.0-cp.0.3.6-s3.1.6.1-tc.1
           -c 'from tier_controller import TierController; print(TierController.__name__)'

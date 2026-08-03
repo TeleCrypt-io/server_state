@@ -18,10 +18,8 @@ usage() {
   cat <<'EOF'
 Usage:
   deploy.sh release <exact-release-tag>
-  deploy.sh rollback [<exact-release-tag>]
 
-`release` deploys only the supplied tag fetched from origin. `rollback` without a
-tag uses the previous successful release recorded outside the repository.
+`release` deploys only the supplied tag fetched from origin.
 EOF
 }
 
@@ -88,8 +86,8 @@ check_secrets() {
   local cashier_db locker_db
   [ "$(env_value BILLING_ENV "$SECRETS/cashier.secrets.env")" = test ] ||
     die "cashier.secrets.env must explicitly set BILLING_ENV=test for this release"
-  [ "$(env_value TELECRYPT_ENV "$SECRETS/cashier.secrets.env")" = test ] ||
-    die "cashier.secrets.env must retain TELECRYPT_ENV=test while 0.2.1 is a rollback target"
+  [ "$(env_value TELECRYPT_ENV "$SECRETS/cashier.secrets.env")" = production ] ||
+    die "cashier.secrets.env must explicitly set TELECRYPT_ENV=production for this release"
   [ "$(env_value DODO_API_BASE "$SECRETS/cashier.secrets.env")" = https://test.dodopayments.com ] ||
     die "cashier.secrets.env must select the exact Dodo test API origin for this release"
   cashier_db="$(env_value CONTROLPLANE_DB_URL "$SECRETS/cashier.secrets.env")"
@@ -120,14 +118,6 @@ preflight_release() {
   rmdir "$candidate" >/dev/null 2>&1 || true
 }
 
-read_recorded_release() {
-  local file="$1" value
-  [ -f "$file" ] || return 1
-  IFS= read -r value <"$file" || true
-  validate_tag_name "$value"
-  printf '%s\n' "$value"
-}
-
 wait_for_health() {
   local attempt status
   for attempt in $(seq 1 24); do
@@ -147,8 +137,7 @@ wait_for_health() {
 }
 
 apply_release() {
-  local tag="$1" previous=""
-  previous="$(read_recorded_release "$STATE/current-release" 2>/dev/null || true)"
+  local tag="$1"
 
   log "Checkout exact release tag: $tag"
   git -C "$REPO" switch --detach "$tag"
@@ -164,11 +153,7 @@ apply_release() {
   log "Health checks"
   if ! wait_for_health; then
     printf 'release %s did not become healthy\n' "$tag" >&2
-    if [ -n "$previous" ]; then
-      printf 'rollback command: %s rollback %s\n' "$0" "$previous" >&2
-    else
-      printf 'no previous successful release is recorded; inspect the stack before retrying\n' >&2
-    fi
+    printf 'inspect the stack before making a new release\n' >&2
     docker compose --env-file "$ENV_FILE" ps >&2 || true
     return 1
   fi
@@ -178,10 +163,6 @@ apply_release() {
     check_mode 700 "$STATE"
   else
     mkdir -m 700 -p "$STATE"
-  fi
-  if [ -n "$previous" ] && [ "$previous" != "$tag" ]; then
-    printf '%s\n' "$previous" >"$STATE/previous-release"
-    chmod 600 "$STATE/previous-release"
   fi
   printf '%s\n' "$tag" >"$STATE/current-release"
   chmod 600 "$STATE/current-release"
@@ -196,13 +177,6 @@ main() {
   case "$command" in
     release)
       [ "$#" -eq 2 ] || { usage >&2; exit 2; }
-      ;;
-    rollback)
-      [ "$#" -le 2 ] || { usage >&2; exit 2; }
-      if [ -z "$tag" ]; then
-        tag="$(read_recorded_release "$STATE/previous-release")" ||
-          die "no previous successful release is recorded; supply an exact release tag"
-      fi
       ;;
     -h|--help|help)
       usage

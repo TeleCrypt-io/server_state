@@ -15,18 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Validate shell
-        run: bash -n deploy/deploy.sh
-
       - name: Validate Compose
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets
           TELECRYPT_DATA_DIR: /tmp/telecrypt-data
         run: |
           mkdir -p "$TELECRYPT_SECRETS_DIR" "$TELECRYPT_DATA_DIR"
-          cp secrets/locker.secrets.example.env "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
-          cp secrets/plan.secrets.example.env "$TELECRYPT_SECRETS_DIR/plan.secrets.env"
-          cp secrets/cashier.secrets.example.env "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
+          touch "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
+          touch "$TELECRYPT_SECRETS_DIR/steward.secrets.env"
+          touch "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
           docker compose --env-file .env.example config --quiet
 
       - name: Validate Caddy

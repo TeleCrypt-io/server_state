@@ -55,8 +55,8 @@ services:
     entrypoint: ["python", "-m", "synapse.app.homeserver"]
     command: ["-c", "/homeserver.yaml", "-c", "/secrets.yaml"]
     volumes:
-      - ./synapse/homeserver.yaml:/homeserver.yaml:ro
-      - ./synapse/log.config:/log.config:ro
+      - ./synapse.yaml:/homeserver.yaml:ro
+      - ./synapse.log.config:/log.config:ro
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/synapse.secrets.yaml:/secrets.yaml:ro
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/synapse_signing.key:/signing.key:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/synapse/media_store:/data:rw
@@ -86,8 +86,8 @@ services:
     environment:
       - RUST_LOG=info
     volumes:
-      - ./mas/config.yaml:/config.yaml:ro
-      - ./synapse/homeserver.yaml:/homeserver.yaml:ro
+      - ./mas.yaml:/config.yaml:ro
+      - ./synapse.yaml:/homeserver.yaml:ro
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/mas.secrets.yaml:/secrets.yaml:ro
 
   # ── redpill: public agent-registration shim (POST /redpill only, routed by Caddy). Privilege
@@ -95,7 +95,7 @@ services:
   # registration form over telecrypt_net and mints the agent token via compat login. (morpheus is
   # gone entirely; see the controlplane repo README.) ───────────────────────────────────────────
   redpill:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.8
     container_name: tc_redpill
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -121,7 +121,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.8
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -149,11 +149,11 @@ services:
       mas:
         condition: service_started
 
-  # ── plan: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
+  # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
-  plan:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
-    container_name: tc_plan
+  steward:
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.8
+    container_name: tc_steward
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]
     security_opt: ["no-new-privileges:true"]
@@ -163,15 +163,16 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
-    entrypoint: ["/plan"]
+    entrypoint: ["/steward"]
     environment:
+      - BILLING_ENV=test
       - SERVER_NAME=telecrypt.io
       - HOMESERVER=https://backend.telecrypt.io
       - MAS_BASE_URL=http://mas:8080
       - PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan
       - CASHIER_INTERNAL_URL=http://cashier:9011
     env_file:
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/plan.secrets.env
+      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/steward.secrets.env
     depends_on:
       mas:
         condition: service_started
@@ -179,7 +180,7 @@ services:
   # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
   # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.1.0
+    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.1.1
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]

@@ -95,7 +95,7 @@ services:
   # registration form over telecrypt_net and mints the agent token via compat login. (morpheus is
   # gone entirely; see the controlplane repo README.) ───────────────────────────────────────────
   redpill:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
     container_name: tc_redpill
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -121,7 +121,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -149,12 +149,13 @@ services:
       mas:
         condition: service_started
 
-  # ── cashier: Plan tab, team/seat billing, Dodo webhooks, Synapse verified unlock. ─────────────
-  cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6
-    container_name: tc_cashier
+  # ── plan: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
+  # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
+  plan:
+    image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.7
+    container_name: tc_plan
     restart: unless-stopped
-    networks: [ telecrypt_net ]
+    networks: [ telecrypt_net, cashier_plan_net ]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -162,12 +163,37 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
-    entrypoint: ["/cashier"]
+    entrypoint: ["/plan"]
+    environment:
+      - SERVER_NAME=telecrypt.io
+      - HOMESERVER=https://backend.telecrypt.io
+      - MAS_BASE_URL=http://mas:8080
+      - PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan
+      - CASHIER_INTERNAL_URL=http://cashier:9011
+    env_file:
+      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/plan.secrets.env
+    depends_on:
+      mas:
+        condition: service_started
+
+  # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
+  # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
+  cashier:
+    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.1.0
+    container_name: tc_cashier
+    restart: unless-stopped
+    networks: [ telecrypt_net, cashier_plan_net ]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    user: "991:991"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     environment:
       - SERVER_NAME=telecrypt.io
       - MATRIX_DEPLOYMENT_ID=production
-      # Synapse's admin API must stay on telecrypt_net; the public Caddy route rejects /_synapse.
-      # HOMESERVER remains public because cashier uses it to build browser-facing OIDC redirects.
+      # Synapse's admin API stays on telecrypt_net. Cashier has no browser/OIDC routes.
       - SYNAPSE_ADMIN_URL=http://synapse:8008
       - HOMESERVER=https://backend.telecrypt.io
       - MAS_BASE_URL=http://mas:8080
@@ -208,3 +234,5 @@ networks:
   telecrypt_net:
     name: telecrypt_net
     driver: bridge
+  cashier_plan_net:
+    internal: true

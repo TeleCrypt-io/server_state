@@ -25,6 +25,7 @@ jobs:
         run: |
           mkdir -p "$TELECRYPT_SECRETS_DIR" "$TELECRYPT_DATA_DIR"
           cp secrets/locker.secrets.example.env "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
+          cp secrets/plan.secrets.example.env "$TELECRYPT_SECRETS_DIR/plan.secrets.env"
           cp secrets/cashier.secrets.example.env "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
           docker compose --env-file .env.example config --quiet
 

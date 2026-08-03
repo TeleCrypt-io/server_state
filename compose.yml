@@ -29,6 +29,9 @@ services:
       - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:${INGRESS_PORT:-8080}:80"
     environment:
       - TRUSTED_PROXY=${TRUSTED_PROXY:-127.0.0.1/32}
+    # Contains only DODO_WEBHOOK_PATH, not a Dodo API key or webhook signature secret.
+    env_file:
+      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/ingress.secrets.env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -90,13 +93,13 @@ services:
       - ./synapse.yaml:/homeserver.yaml:ro
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/mas.secrets.yaml:/secrets.yaml:ro
 
-  # ── redpill: public agent-registration shim (POST /redpill only, routed by Caddy). Privilege
+  # ── controlplane: public agent-registration shim (POST /redpill only, routed by Caddy). Privilege
   # rework: holds NO credentials of any kind — no env_file at all. It drives MAS's public
   # registration form over telecrypt_net and mints the agent token via compat login. (morpheus is
   # gone entirely; see the controlplane repo README.) ───────────────────────────────────────────
-  redpill:
+  controlplane:
     image: ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.8
-    container_name: tc_redpill
+    container_name: tc_controlplane
     restart: unless-stopped
     networks: [ telecrypt_net ]
     security_opt: ["no-new-privileges:true"]

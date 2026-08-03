@@ -64,7 +64,7 @@ http://telecrypt.io {
 	}
 }
 
-# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + Redpill + Steward + Cashier) ──
+# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + Controlplane + Cashier) ──────
 http://backend.telecrypt.io {
 	log
 	import security_headers
@@ -77,6 +77,11 @@ http://backend.telecrypt.io {
 	}
 	@synapse_admin path /_synapse /_synapse/*
 	handle @synapse_admin {
+		respond "Not Found" 404
+	}
+	# Cashier's command API is private Docker-network traffic only. Do not forward this public path.
+	@cashier_internal path /internal /internal/*
+	handle @cashier_internal {
 		respond "Not Found" 404
 	}
 
@@ -106,7 +111,7 @@ http://backend.telecrypt.io {
 		path /redpill
 	}
 	handle @redpill_post {
-		reverse_proxy redpill:9009
+		reverse_proxy controlplane:9009
 	}
 	@redpill_other_method path /redpill
 	handle @redpill_other_method {
@@ -119,13 +124,19 @@ http://backend.telecrypt.io {
 	handle @plan {
 		reverse_proxy steward:9012
 	}
-	# Cashier has no browser surface. This is the sole public route to it, for Dodo's signed webhook.
+	# Cashier has no browser surface. DODO_WEBHOOK_PATH is a mode-600 ingress secret; Caddy rewrites
+	# that external capability URL to Cashier's canonical internal handler.
 	@dodo_webhook {
 		method POST
-		path /webhooks/dodo
+		path {$DODO_WEBHOOK_PATH}
 	}
 	handle @dodo_webhook {
+		uri replace {$DODO_WEBHOOK_PATH} /webhooks/dodo
 		reverse_proxy cashier:9011
+	}
+	@legacy_dodo_webhook path /webhooks/dodo /webhooks/dodo/*
+	handle @legacy_dodo_webhook {
+		respond "Not Found" 404
 	}
 
 	# Future: LiveKit JWT service (staged off until VoIP wiring — see compose.yml lkjwt service)

@@ -6,7 +6,7 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - A controlplane-owned, exact-version Synapse policy-module image.
 - Matrix Authentication Service (MAS / MSC3861).
 - Caddy HTTP ingress behind an external TLS terminator.
-- TeleCrypt control-plane services (`redpill`, `janitor`, and `steward`) plus private Cashier.
+- TeleCrypt control-plane services (`controlplane`, `janitor`, and `steward`) plus private Cashier.
 - External PostgreSQL and S3-backed encrypted media.
 
 ## Configure
@@ -40,10 +40,10 @@ Cashier and janitor must use the same `CONTROLPLANE_DB_URL`. Both bind that data
 billing release must use a different database; changing keys or environment variables cannot
 silently reuse the test-billing state.
 
-Configure the Dodo test-product webhook as
-`https://backend.telecrypt.io/webhooks/dodo`. Switching to live billing requires a separately
-reviewed immutable release, live-only keys/product/webhook, `BILLING_ENV=production`, and a new
-control-plane database.
+The Dodo webhook is a generated private capability URL held only in the VM's mode-600
+`ingress.secrets.env`; it is never committed to this repository. Switching to live billing
+requires a separately reviewed immutable release, live-only keys/product/webhook,
+`BILLING_ENV=production`, and a new control-plane database.
 
 ## Releases
 
@@ -51,8 +51,9 @@ This repository contains declarative state only. It publishes no packages, image
 tooling, secret templates, binaries, wheels, or other artifacts. The private Harness owns
 deployment operations and the secret-file contract.
 
-Every reviewed state change merged to `main` receives an immutable annotated tag and GitHub Release
-record. It selects exact component image releases, which must already be published and verified.
+Every reviewed state change merged to `main` receives an immutable `state-<12-char-git-sha>` tag and
+GitHub Release record. It selects exact component image releases, which must already be published
+and verified. The state release is an identity for one configuration commit, not a package version.
 
 ## Security and licence
 

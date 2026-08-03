@@ -3,7 +3,7 @@ name: validate
 on:
   push:
     branches: [main]
-    tags: ["*.*.*"]
+    tags: ["state-*"]
   pull_request:
 
 permissions:
@@ -24,11 +24,13 @@ jobs:
           touch "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
           touch "$TELECRYPT_SECRETS_DIR/steward.secrets.env"
           touch "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
+          printf '%s\n' 'DODO_WEBHOOK_PATH=/webhook-dodo-ci-only' > "$TELECRYPT_SECRETS_DIR/ingress.secrets.env"
           docker compose --env-file .env.example config --quiet
 
       - name: Validate Caddy
         run: |
-          docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+          docker run --rm --env DODO_WEBHOOK_PATH=/webhook-dodo-ci-only \
+            --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 
       - name: Verify pinned standalone Synapse image

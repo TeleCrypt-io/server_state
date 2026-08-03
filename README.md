@@ -1,4 +1,4 @@
-# TeleCrypt.io server
+# TeleCrypt.io server state
 
 Public runtime configuration for the TeleCrypt Matrix service:
 
@@ -6,16 +6,15 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - A controlplane-owned, exact-version Synapse policy-module image.
 - Matrix Authentication Service (MAS / MSC3861).
 - Caddy HTTP ingress behind an external TLS terminator.
-- TeleCrypt control-plane services (`redpill`, `janitor`, and `cashier`).
+- TeleCrypt control-plane services (`redpill`, `janitor`, and `steward`) plus private Cashier.
 - External PostgreSQL and S3-backed encrypted media.
 
 ## Configure
 
-1. Copy `.env.example` to the server-only `.env`.
-2. Copy `secrets/*.example.*` to a private directory outside this repository and replace every
-   placeholder.
-3. Set `TELECRYPT_SECRETS_DIR` and `TELECRYPT_DATA_DIR` in `.env`.
-4. Validate before starting:
+1. Obtain the private deployment procedure and secret-file contract from TeleCrypt Harness.
+2. Copy `.env.example` to the server-only `.env` and set `TELECRYPT_SECRETS_DIR` and
+   `TELECRYPT_DATA_DIR`.
+3. Validate before starting:
 
 ```sh
 docker compose config --quiet
@@ -48,15 +47,12 @@ control-plane database.
 
 ## Releases
 
-Runtime images use exact version tags by project policy. Upgrade them deliberately after testing.
-See `deploy/README.md` for the exact-release-tag deployment entry point.
+This repository contains declarative state only. It publishes no packages, images, deployment
+tooling, secret templates, binaries, wheels, or other artifacts. The private Harness owns
+deployment operations and the secret-file contract.
 
-The `redpill`, `janitor`, and `cashier` services use
-`ghcr.io/telecrypt-io/telecrypt-controlplane:0.3.6`, while `synapse` uses the matching
-`ghcr.io/telecrypt-io/telecrypt-synapse:1.155-tc1` image. The image-builder
-consumes the `controlplane` `0.3.6` tier-controller wheel and the Matrix.org S3 provider; this
-repository only selects the coordinated exact releases and configures them. The server release must
-remain blocked until both referenced images are published.
+Every reviewed state change merged to `main` receives an immutable annotated tag and GitHub Release
+record. It selects exact component image releases, which must already be published and verified.
 
 ## Security and licence
 

@@ -21,7 +21,7 @@
 	}
 }
 
-# Safe response defaults. Do not use X-Frame-Options here: MAS embeds the Plan page in its own
+# Safe response defaults. Do not use X-Frame-Options here: MAS embeds the Steward page in its own
 # account UI. TLS/HSTS policy belongs to the TLS-terminating host, not this HTTP-only proxy.
 (security_headers) {
 	header {
@@ -64,7 +64,7 @@ http://telecrypt.io {
 	}
 }
 
-# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + redpill + cashier) ────────────
+# ── BACKEND (backend.telecrypt.io): Matrix stack (Synapse + MAS + Redpill + Steward + Cashier) ──
 http://backend.telecrypt.io {
 	log
 	import security_headers
@@ -114,10 +114,10 @@ http://backend.telecrypt.io {
 		respond "Method Not Allowed" 405
 	}
 
-	# Plan owns every browser route. Dodo card data is entered only on the provider-hosted checkout.
+	# Steward owns every browser route. Dodo card data is entered only on the provider-hosted checkout.
 	@plan path /plan /plan/* /api/team /api/team/*
 	handle @plan {
-		reverse_proxy plan:9012
+		reverse_proxy steward:9012
 	}
 	# Cashier has no browser surface. This is the sole public route to it, for Dodo's signed webhook.
 	@dodo_webhook {

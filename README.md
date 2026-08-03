@@ -51,7 +51,7 @@ This repository contains declarative state only. It publishes no packages, image
 tooling, secret templates, binaries, wheels, or other artifacts. The private Harness owns
 deployment operations and the secret-file contract.
 
-Every reviewed state change merged to `main` receives an immutable `state-<12-char-git-sha>` tag and
+Every reviewed state change merged to `main` receives an immutable `server-state-<short-git-sha>` tag and
 GitHub Release record. It selects exact component image releases, which must already be published
 and verified. The state release is an identity for one configuration commit, not a package version.
 

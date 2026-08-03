@@ -3,7 +3,7 @@ name: validate
 on:
   push:
     branches: [main]
-    tags: ["state-*"]
+    tags: ["server-state-*"]
   pull_request:
 
 permissions:

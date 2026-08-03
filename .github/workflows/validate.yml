@@ -33,10 +33,9 @@ jobs:
           docker run --rm --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 
-      - name: Verify pinned Synapse policy module image
-        # A server PR is opened before the coordinated controlplane release exists. The
-        # controlplane PR builds/tests this target; server verifies the published exact tag on
-        # main/tag runs after the owner creates the release.
+      - name: Verify pinned standalone Synapse image
+        # A server PR is opened before the coordinated component releases exist. The image-builder
+        # workflow tests this target; server verifies the published exact tag on main/tag runs.
         if: github.event_name != 'pull_request'
         run: >-
           docker run --rm

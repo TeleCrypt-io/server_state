@@ -44,7 +44,9 @@ http:
 # database:        -> in mas.secrets.yaml (host postgres_mas + password)
 # matrix:          -> in mas.secrets.yaml (kind synapse, endpoint http://synapse:8008, shared secret)
 
-# Local password accounts with open registration. Email is optional.
+# Local passwords are accepted only by MAS's hosted OAuth human pages (for
+# registration, reauthentication, and recovery); Caddy denies Matrix
+# `/_matrix/client/*/login` compatibility authentication. Email is optional.
 passwords:
   enabled: true
 

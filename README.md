@@ -28,6 +28,11 @@ Matrix, MAS, registration, and Plan endpoints live at `backend.telecrypt.io`.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress.
 
+MAS's hosted `/auth/login` remains available for OAuth browser and device authorization. Caddy
+returns `404` for public `/_matrix/client/*/login` before the MAS compatibility handler, so Matrix
+password authentication is unavailable. Only compatibility logout and refresh routes remain routed
+to MAS where Matrix clients require them.
+
 ## Billing mode
 
 The production Matrix deployment currently uses Dodo's test environment while live billing is

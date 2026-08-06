@@ -15,6 +15,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
+      - name: Verify OAuth-only Matrix login ingress
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          caddy = Path("Caddyfile").read_text(encoding="utf-8")
+          login_deny = "@matrix_compat_login path_regexp ^/_matrix/client/(.*)/login/?$"
+          compat_allow = "@mas_compat path_regexp ^/_matrix/client/(.*)/(logout|refresh)/?$"
+          assert login_deny in caddy
+          assert compat_allow in caddy
+          assert caddy.index(login_deny) < caddy.index(compat_allow)
+          assert "(login|logout|refresh)" not in caddy
+          assert "@mas path /auth /auth/*" in caddy
+          PY
+
       - name: Validate Compose
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets

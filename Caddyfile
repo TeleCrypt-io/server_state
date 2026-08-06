@@ -85,8 +85,15 @@ http://backend.telecrypt.io {
 		respond "Not Found" 404
 	}
 
-	# MAS owns the compatibility login/logout/refresh endpoints …
-	@mas_compat path_regexp ^/_matrix/client/(.*)/(login|logout|refresh)
+	# Legacy Matrix password compatibility login must never reach MAS or Synapse.
+	# MAS-hosted /auth/login remains available for OAuth browser/device approval.
+	@matrix_compat_login path_regexp ^/_matrix/client/(.*)/login/?$
+	handle @matrix_compat_login {
+		respond "Not Found" 404
+	}
+
+	# Retain only MAS compatibility logout/refresh routes required by Matrix clients.
+	@mas_compat path_regexp ^/_matrix/client/(.*)/(logout|refresh)/?$
 	handle @mas_compat {
 		reverse_proxy mas:8080
 	}

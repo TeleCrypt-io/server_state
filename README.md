@@ -9,19 +9,15 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - TeleCrypt control-plane services (`controlplane`, `janitor`, and `steward`) plus private Cashier.
 - External PostgreSQL and S3-backed encrypted media.
 
-## Configure
+## Configuration and activation
 
 1. Obtain the private deployment procedure and secret-file contract from TeleCrypt Harness.
-2. Copy `.env.example` to the server-only `.env` and set `TELECRYPT_SECRETS_DIR` and
-   `TELECRYPT_DATA_DIR`.
-3. Validate before starting:
-
-```sh
-docker compose config --quiet
-docker compose run --rm caddy caddy validate --config /etc/caddy/Caddyfile
-docker compose up -d
-docker compose ps
-```
+2. Use the Harness guarded activator for every production validation and activation. It verifies
+   the exact immutable state release, validates rendered Compose and Caddy configuration, pulls
+   released images, activates with `--no-build`, and records the result.
+3. Do not run direct `docker compose pull`, `up`, `run`, or equivalent production activation
+   commands from this public repository. Public source/config validation is performed by the
+   repository workflow; the Harness performs the corresponding guarded VM preflight.
 
 `telecrypt.io` serves Matrix discovery and redirects ordinary web traffic to `www.telecrypt.io`.
 Matrix, MAS, registration, and Plan endpoints live at `backend.telecrypt.io`.

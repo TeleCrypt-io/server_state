@@ -30,6 +30,20 @@ jobs:
           assert "@mas path /auth /auth/*" in caddy
           PY
 
+      - name: Verify canonical and legacy Plan action ingress
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          caddy = Path("Caddyfile").read_text(encoding="utf-8")
+          plan_routes = "@plan path /plan /plan/* /api/plan /api/plan/* /api/team /api/team/*"
+          assert plan_routes in caddy
+          start = caddy.index(plan_routes)
+          route = caddy[start:caddy.index("\n\t}", start) + 3]
+          assert "reverse_proxy steward:9012" in route
+          assert "reverse_proxy cashier:9011" not in route
+          PY
+
       - name: Validate Compose
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets

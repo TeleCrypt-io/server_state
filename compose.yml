@@ -41,9 +41,10 @@ services:
 
   # ── Matrix homeserver (official Synapse + exact external policy/S3 components) ───────────────
   synapse:
-    # `1.155-tc1` is the immutable operational tag. OCI labels and provenance record Synapse
-    # 1.155.0, Matrix.org S3 provider 1.6.1, and the checksum-verified controlplane 0.3.6 wheel.
-    # Do not replace it with a bind mount or a startup package install.
+    # `1.155-tc1` is this image's immutable operational tag. Its OCI provenance records Synapse
+    # 1.155.0, Matrix.org S3 provider 1.6.1, and its bundled policy-module wheel; that provenance
+    # is independent of the Controlplane application release selected below. Do not replace it with
+    # a bind mount or a startup package install.
     image: ghcr.io/telecrypt-io/telecrypt-synapse:1.155-tc1
     container_name: tc_synapse
     restart: unless-stopped
@@ -99,7 +100,7 @@ services:
   # mints a Matrix compatibility token or calls m.login.password. (morpheus is gone entirely;
   # see the controlplane repo README.) ─────────────────────────────────────────────────────────
   controlplane:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.12
+    image: ghcr.io/telecrypt-io/controlplane:0.3.13
     container_name: tc_controlplane
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -125,7 +126,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.12
+    image: ghcr.io/telecrypt-io/controlplane:0.3.13
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -156,7 +157,7 @@ services:
   # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
   steward:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.12
+    image: ghcr.io/telecrypt-io/controlplane:0.3.13
     container_name: tc_steward
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]

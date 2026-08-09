@@ -126,8 +126,10 @@ http://backend.telecrypt.io {
 		respond "Method Not Allowed" 405
 	}
 
-	# Steward owns every browser route. Dodo card data is entered only on the provider-hosted checkout.
-	@plan path /plan /plan/* /api/team /api/team/*
+	# Steward owns every browser route. Canonical Plan actions use /api/plan; retain /api/team
+	# for cached legacy pages until their compatibility window closes. Dodo card data is entered only
+	# on the provider-hosted checkout.
+	@plan path /plan /plan/* /api/plan /api/plan/* /api/team /api/team/*
 	handle @plan {
 		reverse_proxy steward:9012
 	}

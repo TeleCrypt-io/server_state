@@ -51,7 +51,7 @@ jobs:
           from pathlib import Path
 
           compose = Path("compose.yml").read_text(encoding="utf-8")
-          expected = "ghcr.io/telecrypt-io/controlplane:0.3.13"
+          expected = "ghcr.io/telecrypt-io/controlplane:0.3.14"
           for service in ("controlplane", "janitor", "steward"):
               block = re.search(
                   rf"^  {service}:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",

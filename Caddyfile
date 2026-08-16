@@ -143,15 +143,6 @@ http://backend.telecrypt.io {
 		uri replace {$DODO_WEBHOOK_PATH} /webhooks/dodo
 		reverse_proxy cashier:9011
 	}
-	# Transitional compatibility route. Remove in a subsequent immutable state release after the
-	# Dodo test endpoint has been moved to DODO_WEBHOOK_PATH.
-	@legacy_dodo_webhook {
-		method POST
-		path /webhooks/dodo
-	}
-	handle @legacy_dodo_webhook {
-		reverse_proxy cashier:9011
-	}
 
 	# Future: LiveKit JWT service (staged off until VoIP wiring — see compose.yml lkjwt service)
 	# @lkjwt path /jwt /jwt/*

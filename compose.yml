@@ -185,7 +185,7 @@ services:
   # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
   # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.1.1
+    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.2.0
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]

@@ -100,7 +100,7 @@ services:
   # mints a Matrix compatibility token or calls m.login.password. (morpheus is gone entirely;
   # see the controlplane repo README.) ─────────────────────────────────────────────────────────
   controlplane:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.15
+    image: ghcr.io/telecrypt-io/controlplane:0.3.16
     container_name: tc_controlplane
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -126,7 +126,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.15
+    image: ghcr.io/telecrypt-io/controlplane:0.3.16
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -157,7 +157,7 @@ services:
   # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
   steward:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.15
+    image: ghcr.io/telecrypt-io/controlplane:0.3.16
     container_name: tc_steward
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]

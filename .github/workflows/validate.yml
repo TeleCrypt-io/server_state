@@ -71,21 +71,99 @@ jobs:
           assert images == [expected] * 3, images
           PY
 
+      - name: Verify environment parameterization and Caddy privilege contract
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          env_example = Path(".env.example").read_text(encoding="utf-8")
+          required = (
+              "MATRIX_DEPLOYMENT_ID",
+              "SERVER_NAME",
+              "BACKEND_HOST",
+              "PUBLIC_SITE_HOST",
+              "HOMESERVER",
+              "MAS_BASE_URL",
+              "PLAN_PUBLIC_URL",
+          )
+          for key in required:
+              assert len(re.findall(rf"^{key}=", env_example, flags=re.MULTILINE)) == 1, key
+
+          compose = Path("compose.yml").read_text(encoding="utf-8")
+          caddy = re.search(
+              r"^  caddy:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",
+              compose,
+              flags=re.MULTILINE | re.DOTALL,
+          )
+          assert caddy, "missing caddy service"
+          caddy_body = caddy.group("body")
+          for key in ("TRUSTED_PROXY", "SERVER_NAME", "BACKEND_HOST", "PUBLIC_SITE_HOST", "HOMESERVER", "MAS_BASE_URL"):
+              assert re.search(rf"^\s+- {key}=", caddy_body, flags=re.MULTILINE), key
+          assert ":8080\"" in caddy_body, "Caddy must use the unprivileged container port"
+          assert "NET_BIND_SERVICE" not in caddy_body
+          assert 'user: "65532:65532"' in caddy_body
+          assert "read_only: true" in caddy_body
+          assert "/config/caddy:uid=65532,gid=65532,mode=0700" in caddy_body
+          assert "/data/caddy:uid=65532,gid=65532,mode=0700" in caddy_body
+
+          caddyfile = Path("Caddyfile").read_text(encoding="utf-8")
+          consumed = set(re.findall(r"\{\$([A-Z][A-Z0-9_]*)\}", caddyfile))
+          declared = set(re.findall(r"^\s+- ([A-Z][A-Z0-9_]*)=", caddy_body, flags=re.MULTILINE))
+          assert consumed - declared <= {"DODO_WEBHOOK_PATH"}, consumed - declared
+          assert "ingress.secrets.env" in caddy_body
+          assert "DODO_WEBHOOK_PATH" in caddyfile
+          assert "http://{$SERVER_NAME}:8080" in caddyfile
+          assert "http://{$BACKEND_HOST}:8080" in caddyfile
+
+          for value in (
+              "MATRIX_DEPLOYMENT_ID=production",
+              "SERVER_NAME=telecrypt.io",
+              "HOMESERVER=https://backend.telecrypt.io",
+              "MAS_BASE_URL=https://backend.telecrypt.io/auth",
+              "PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan",
+              "LIVEKIT_FULL_ACCESS_HOMESERVERS=telecrypt.io",
+          ):
+              assert value not in compose, value
+          for site in ("http://telecrypt.io", "http://backend.telecrypt.io"):
+              assert site not in caddyfile, site
+          synapse = Path("synapse.yaml").read_text(encoding="utf-8")
+          assert 'server_name: "telecrypt.io"' not in synapse
+          assert 'public_baseurl: "https://backend.telecrypt.io/"' not in synapse
+          assert "backend.telecrypt.io" not in Path("mas.yaml").read_text(encoding="utf-8")
+          assert compose.count("BILLING_ENV=test") == 2
+          assert "BILLING_ENV=production" not in compose
+          assert "live.dodopayments.com" not in compose
+          PY
+
       - name: Validate Compose
         env:
           TELECRYPT_SECRETS_DIR: /tmp/telecrypt-secrets
           TELECRYPT_DATA_DIR: /tmp/telecrypt-data
         run: |
           mkdir -p "$TELECRYPT_SECRETS_DIR" "$TELECRYPT_DATA_DIR"
-          touch "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
-          touch "$TELECRYPT_SECRETS_DIR/steward.secrets.env"
-          touch "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
-          printf '%s\n' 'DODO_WEBHOOK_PATH=/webhook-dodo-ci-only' > "$TELECRYPT_SECRETS_DIR/ingress.secrets.env"
+          install -m 600 /dev/null "$TELECRYPT_SECRETS_DIR/locker.secrets.env"
+          install -m 600 /dev/null "$TELECRYPT_SECRETS_DIR/steward.secrets.env"
+          install -m 600 /dev/null "$TELECRYPT_SECRETS_DIR/cashier.secrets.env"
+          DODO_WEBHOOK_PATH="$(python3 -c 'import secrets; print("/webhook-dodo-" + secrets.token_hex(32))')"
+          printf '%s\n' "DODO_WEBHOOK_PATH=$DODO_WEBHOOK_PATH" > "$TELECRYPT_SECRETS_DIR/ingress.secrets.env"
+          chmod 600 "$TELECRYPT_SECRETS_DIR/ingress.secrets.env"
           docker compose --env-file .env.example config --quiet
 
       - name: Validate Caddy
         run: |
-          docker run --rm --env DODO_WEBHOOK_PATH=/webhook-dodo-ci-only \
+          docker run --rm \
+            --user 65532:65532 \
+            --read-only \
+            --tmpfs /config/caddy:uid=65532,gid=65532,mode=0700 \
+            --tmpfs /data/caddy:uid=65532,gid=65532,mode=0700 \
+            --env TRUSTED_PROXY=127.0.0.1/32 \
+            --env SERVER_NAME=example.invalid \
+            --env BACKEND_HOST=backend.example.invalid \
+            --env PUBLIC_SITE_HOST=www.example.invalid \
+            --env HOMESERVER=https://backend.example.invalid \
+            --env MAS_BASE_URL=https://backend.example.invalid/auth \
+            --env-file /tmp/telecrypt-secrets/ingress.secrets.env \
             --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             docker.io/caddy:2.11.4-alpine caddy validate --config /etc/caddy/Caddyfile
 

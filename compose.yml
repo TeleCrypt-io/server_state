@@ -19,16 +19,25 @@ services:
     networks: [ telecrypt_net ]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    cap_add: ["NET_BIND_SERVICE"]          # binds :80 in-container
+    read_only: true
+    user: "65532:65532"
+    tmpfs:
+      - /config/caddy:uid=65532,gid=65532,mode=0700
+      - /data/caddy:uid=65532,gid=65532,mode=0700
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     ports:
       # Set INGRESS_BIND_ADDRESS in the server-only .env to the dedicated proxy-facing VM address.
       # The loopback default fails closed for a fresh checkout.
-      - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:${INGRESS_PORT:-8080}:80"
+      - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:${INGRESS_PORT:-8080}:8080"
     environment:
       - TRUSTED_PROXY=${TRUSTED_PROXY:-127.0.0.1/32}
+      - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
+      - BACKEND_HOST=${BACKEND_HOST:?set BACKEND_HOST}
+      - PUBLIC_SITE_HOST=${PUBLIC_SITE_HOST:?set PUBLIC_SITE_HOST}
+      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
+      - MAS_BASE_URL=${MAS_BASE_URL:?set MAS_BASE_URL}
     # Contains only DODO_WEBHOOK_PATH, not a Dodo API key or webhook signature secret.
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/ingress.secrets.env
@@ -74,7 +83,7 @@ services:
       mas:
         condition: service_started
 
-  # ── Matrix Authentication Service (MSC3861). Served under https://backend.telecrypt.io/auth/ ─
+  # ── Matrix Authentication Service (MSC3861). Served under the configured MAS public base URL ─
   mas:
     image: ghcr.io/element-hq/matrix-authentication-service:1.16.0
     container_name: tc_mas
@@ -113,10 +122,10 @@ services:
       options: { max-size: "10m", max-file: "3" }
     environment:
       # Registration redirects must use MAS's browser-visible public base URL.
-      - MAS_BASE_URL=https://backend.telecrypt.io/auth
-      - HOMESERVER=https://backend.telecrypt.io
-      # SERVER_NAME keeps MXIDs at @agent:telecrypt.io even though HOMESERVER is backend.
-      - SERVER_NAME=telecrypt.io
+      - MAS_BASE_URL=${MAS_BASE_URL:?set MAS_BASE_URL}
+      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
+      # SERVER_NAME keeps agent MXIDs on the configured Matrix identity domain.
+      - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
       - IGNORED_PROXY_IP=${IGNORED_PROXY_IP:-}
     depends_on:
       mas:
@@ -141,10 +150,10 @@ services:
     environment:
       - RUN_ONCE=1
       - BILLING_ENV=test
-      - MATRIX_DEPLOYMENT_ID=production
-      - SERVER_NAME=telecrypt.io
+      - MATRIX_DEPLOYMENT_ID=${MATRIX_DEPLOYMENT_ID:?set MATRIX_DEPLOYMENT_ID}
+      - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
       - MAS_BASE_URL=http://mas:8081
-      - EXCLUDE_MXIDS=@cashier_admin:telecrypt.io
+      - EXCLUDE_MXIDS=@cashier_admin:${SERVER_NAME:?set SERVER_NAME}
       - LOCK_AFTER_HOURS=48
     # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, CONTROLPLANE_DB_URL, OWNER_EMAIL, SMTP_*.
     # env_file is read by the rootless Compose operator, not by the container uid.
@@ -171,10 +180,10 @@ services:
     command: ["/steward"]
     environment:
       - BILLING_ENV=test
-      - SERVER_NAME=telecrypt.io
-      - HOMESERVER=https://backend.telecrypt.io
+      - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
+      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
       - MAS_BASE_URL=http://mas:8080
-      - PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan
+      - PLAN_PUBLIC_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
       - CASHIER_INTERNAL_URL=http://cashier:9011
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/steward.secrets.env
@@ -197,17 +206,13 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     environment:
-      - SERVER_NAME=telecrypt.io
-      - MATRIX_DEPLOYMENT_ID=production
+      - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
+      - MATRIX_DEPLOYMENT_ID=${MATRIX_DEPLOYMENT_ID:?set MATRIX_DEPLOYMENT_ID}
       # Synapse's admin API stays on telecrypt_net. Cashier has no browser/OIDC routes.
       - SYNAPSE_ADMIN_URL=http://synapse:8008
-      - HOMESERVER=https://backend.telecrypt.io
-      - PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan
+      - PLAN_PUBLIC_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/cashier.secrets.env
-    depends_on:
-      mas:
-        condition: service_started
 
   # ── lkjwt: LiveKit JWT service (Element Call). Staged off — only activate with
   # `docker compose --profile voip up -d` after the LiveKit SFU, its webhook, Caddy route, and
@@ -230,7 +235,7 @@ services:
       - LIVEKIT_KEY=${LIVEKIT_KEY:-__CHANGEME__}
       - LIVEKIT_SECRET=${LIVEKIT_SECRET:-__CHANGEME__}
       # Never use `*`: only local TeleCrypt users may create LiveKit rooms.
-      - LIVEKIT_FULL_ACCESS_HOMESERVERS=telecrypt.io
+      - LIVEKIT_FULL_ACCESS_HOMESERVERS=${SERVER_NAME:?set SERVER_NAME}
       - LIVEKIT_JWT_BIND=:8080
     depends_on: {}
 

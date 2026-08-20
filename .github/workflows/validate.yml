@@ -51,7 +51,7 @@ jobs:
           from pathlib import Path
 
           compose = Path("compose.yml").read_text(encoding="utf-8")
-          expected = "ghcr.io/telecrypt-io/controlplane:0.3.19"
+          expected = None
           for service in ("controlplane", "janitor", "steward"):
               block = re.search(
                   rf"^  {service}:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",
@@ -59,7 +59,14 @@ jobs:
                   flags=re.MULTILINE | re.DOTALL,
               )
               assert block, f"missing {service} service"
-              assert f"image: {expected}" in block.group("body")
+              selected = re.search(
+                  r"image: (ghcr\.io/telecrypt-io/controlplane:[0-9]+\.[0-9]+\.[0-9]+)$",
+                  block.group("body"),
+                  flags=re.MULTILINE,
+              )
+              assert selected, f"{service} must use an exact Controlplane release"
+              expected = expected or selected.group(1)
+              assert selected.group(1) == expected, f"{service} does not use {expected}"
           images = re.findall(r"image: (ghcr.io/telecrypt-io/controlplane:[^\s]+)", compose)
           assert images == [expected] * 3, images
           PY

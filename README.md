@@ -22,7 +22,9 @@ Public runtime configuration for the TeleCrypt Matrix service:
 `telecrypt.io` serves Matrix discovery and redirects ordinary web traffic to `www.telecrypt.io`.
 Matrix, MAS, registration, and Plan endpoints live at `backend.telecrypt.io`.
 
-Administrative Synapse and MAS paths are deliberately unavailable through public ingress.
+Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's
+administrator API is bound only to its internal listener; it is not placed on the public web
+listener and is not routed by Caddy.
 
 MAS's hosted `/auth/login` remains available for OAuth browser and device authorization. Caddy
 returns `404` for public `/_matrix/client/*/login` before the MAS compatibility handler, so Matrix

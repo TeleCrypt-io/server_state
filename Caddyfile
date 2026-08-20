@@ -150,8 +150,8 @@ http://backend.telecrypt.io {
 	# 	reverse_proxy lkjwt:8080
 	# }
 
-	# Everything else → minimal placeholder.
+	# Everything else is outside the published application surface.
 	handle {
-		respond "TeleCrypt.io backend" 200
+		respond "Not Found" 404
 	}
 }

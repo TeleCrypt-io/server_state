@@ -100,7 +100,7 @@ services:
   # mints a Matrix compatibility token or calls m.login.password. (morpheus is gone entirely;
   # see the controlplane repo README.) ─────────────────────────────────────────────────────────
   controlplane:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.19
+    image: ghcr.io/telecrypt-io/controlplane:0.3.20
     container_name: tc_controlplane
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -126,7 +126,7 @@ services:
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
   # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.19
+    image: ghcr.io/telecrypt-io/controlplane:0.3.20
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -143,7 +143,7 @@ services:
       - BILLING_ENV=test
       - MATRIX_DEPLOYMENT_ID=production
       - SERVER_NAME=telecrypt.io
-      - MAS_BASE_URL=http://mas:8080
+      - MAS_BASE_URL=http://mas:8081
       - EXCLUDE_MXIDS=@cashier_admin:telecrypt.io
       - LOCK_AFTER_HOURS=48
     # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, CONTROLPLANE_DB_URL, OWNER_EMAIL, SMTP_*.
@@ -157,7 +157,7 @@ services:
   # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
   steward:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.19
+    image: ghcr.io/telecrypt-io/controlplane:0.3.20
     container_name: tc_steward
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]
@@ -185,7 +185,7 @@ services:
   # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
   # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.2.0
+    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.2.4
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]
@@ -202,7 +202,6 @@ services:
       # Synapse's admin API stays on telecrypt_net. Cashier has no browser/OIDC routes.
       - SYNAPSE_ADMIN_URL=http://synapse:8008
       - HOMESERVER=https://backend.telecrypt.io
-      - MAS_BASE_URL=http://mas:8080
       - PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/cashier.secrets.env

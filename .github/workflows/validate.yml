@@ -131,6 +131,13 @@ jobs:
           assert 'server_name: "telecrypt.io"' not in synapse
           assert 'public_baseurl: "https://backend.telecrypt.io/"' not in synapse
           assert "backend.telecrypt.io" not in Path("mas.yaml").read_text(encoding="utf-8")
+          controlplane = re.search(
+              r"^  controlplane:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",
+              compose,
+              flags=re.MULTILINE | re.DOTALL,
+          )
+          assert controlplane, "missing controlplane service"
+          assert "PLAN_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}" in controlplane.group("body")
           assert compose.count("BILLING_ENV=test") == 2
           assert "BILLING_ENV=production" not in compose
           assert "live.dodopayments.com" not in compose

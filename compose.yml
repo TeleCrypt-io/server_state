@@ -124,6 +124,7 @@ services:
       # Registration redirects must use MAS's browser-visible public base URL.
       - MAS_BASE_URL=${MAS_BASE_URL:?set MAS_BASE_URL}
       - HOMESERVER=${HOMESERVER:?set HOMESERVER}
+      - PLAN_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
       # SERVER_NAME keeps agent MXIDs on the configured Matrix identity domain.
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
       - IGNORED_PROXY_IP=${IGNORED_PROXY_IP:-}

@@ -71,6 +71,51 @@ jobs:
           assert images == [expected] * 3, images
           PY
 
+      - name: Verify MAS admin listener and Janitor network boundary
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          mas = Path("mas.yaml").read_text(encoding="utf-8")
+          web = re.search(
+              r"(?ms)^    - name: web\n(?P<body>.*?)(?=^    - name:|\Z)",
+              mas,
+          )
+          assert web, "missing MAS public listener"
+          assert "- name: adminapi" not in web.group("body")
+          internal = re.search(
+              r"(?ms)^    - name: internal\n(?P<body>.*?)(?=^    - name:|\Z)",
+              mas,
+          )
+          assert internal, "missing MAS internal listener"
+          internal_body = internal.group("body")
+          assert "- name: adminapi" in internal_body
+          assert "host: 127.0.0.1" in internal_body
+          assert "port: 8081" in internal_body
+          assert "host: 0.0.0.0" not in internal_body
+
+          compose = Path("compose.yml").read_text(encoding="utf-8")
+          janitor = re.search(
+              r"(?ms)^  janitor:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",
+              compose,
+          )
+          assert janitor, "missing Janitor service"
+          janitor_body = janitor.group("body")
+          assert re.search(r'^\s+network_mode:\s+["\']service:mas["\']\s*$', janitor_body, flags=re.MULTILINE)
+          assert not re.search(r"^\s+networks:", janitor_body, flags=re.MULTILINE)
+          assert "MAS_BASE_URL=http://127.0.0.1:8081" in janitor_body
+          assert "MAS_BASE_URL=http://mas:8081" not in janitor_body
+
+          caddy = Path("Caddyfile").read_text(encoding="utf-8")
+          mas_admin = "@mas_admin path /auth/api/admin/v1 /auth/api/admin/v1/*"
+          mas_public = "@mas path /auth /auth/*"
+          assert mas_admin in caddy
+          assert mas_public in caddy
+          assert caddy.index(mas_admin) < caddy.index(mas_public)
+          assert 'respond "Not Found" 404' in caddy
+          PY
+
       - name: Verify environment parameterization and Caddy privilege contract
         run: |
           python3 - <<'PY'

@@ -79,8 +79,9 @@ http://{$BACKEND_HOST}:8080 {
 	import access_log
 	import security_headers
 
-	# Administrative APIs are available only over telecrypt_net. The control-plane services use
-	# their container addresses directly; browsers and Internet clients must not reach these paths.
+	# Administrative APIs are not public. MAS's admin listener is loopback-only and is reachable by
+	# Janitor through its shared MAS network namespace; Synapse's admin API remains private
+	# telecrypt_net traffic. Browsers and Internet clients must not reach these paths.
 	@mas_admin path /auth/api/admin/v1 /auth/api/admin/v1/*
 	handle @mas_admin {
 		respond "Not Found" 404

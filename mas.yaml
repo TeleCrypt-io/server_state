@@ -23,9 +23,9 @@ http:
     - name: internal
       resources:
         - name: health
-        - name: adminapi       # REST admin API; reachable only on the internal listener
+        - name: adminapi       # REST admin API; reachable only from Janitor's shared namespace
       binds:
-        - host: 0.0.0.0
+        - host: 127.0.0.1
           port: 8081
       proxy_protocol: false
 

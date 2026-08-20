@@ -134,12 +134,14 @@ services:
 
   # ── janitor: the ONE component holding a standing MAS admin credential (lock stale
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
-  # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
+  # port, no Caddy route, zero inbound surface. It shares only MAS's network namespace so the
+  # loopback-only admin listener is reachable by this job; its DB/SMTP egress remains on MAS's
+  # telecrypt_net attachment. Invoked daily via systemd timer (RUN_ONCE=1). ──
   janitor:
     image: ghcr.io/telecrypt-io/controlplane:0.3.20
     container_name: tc_janitor
     restart: "no"
-    networks: [ telecrypt_net ]
+    network_mode: "service:mas"
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -153,13 +155,15 @@ services:
       - BILLING_ENV=test
       - MATRIX_DEPLOYMENT_ID=${MATRIX_DEPLOYMENT_ID:?set MATRIX_DEPLOYMENT_ID}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - MAS_BASE_URL=http://mas:8081
+      - MAS_BASE_URL=http://127.0.0.1:8081
       - EXCLUDE_MXIDS=@cashier_admin:${SERVER_NAME:?set SERVER_NAME}
       - LOCK_AFTER_HOURS=48
     # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, CONTROLPLANE_DB_URL, OWNER_EMAIL, SMTP_*.
     # env_file is read by the rootless Compose operator, not by the container uid.
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/locker.secrets.env
+    # Keep this dependency for one-shot `compose run`: MAS must already provide the shared
+    # network namespace. Do not use `--no-deps` unless tc_mas is already running.
     depends_on:
       mas:
         condition: service_started

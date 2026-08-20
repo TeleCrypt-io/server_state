@@ -34,8 +34,16 @@ The ingress container listens on an unprivileged port as a non-root user, has a 
 filesystem, and receives only two private temporary directories needed by the official image.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's
-administrator API is bound only to its internal listener; it is not placed on the public web
-listener and is not routed by Caddy.
+administrator API is bound to loopback inside the MAS container, and the one-shot Janitor job
+shares that network namespace so it can use the API without exposing a reachable admin port to
+the other application containers. Janitor keeps MAS's normal network egress for its database and
+mail delivery; it has no listener and is not routed by Caddy.
+
+Before merging or releasing this network boundary, a cold preproduction start must prove that MAS
+is accepting administrator requests before Janitor runs, Janitor exits successfully, database and
+mail egress still work, no Janitor listener appears in the shared namespace, unrelated containers
+cannot reach port 8081, and recreating MAS does not leave the next scheduled Janitor run attached to
+an obsolete namespace. Static Compose validation does not establish these runtime properties.
 
 MAS's hosted `/auth/login` remains available for OAuth browser and device authorization. Caddy
 returns `404` for public `/_matrix/client/*/login` before the MAS compatibility handler, so Matrix

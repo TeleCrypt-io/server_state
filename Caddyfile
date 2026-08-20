@@ -33,12 +33,21 @@
 	}
 }
 
+# Keep paths and response details for diagnosis without retaining OAuth or other secret query data.
+(access_log) {
+	log {
+		format filter {
+			request>uri regexp "[?].*" "?[REDACTED]"
+		}
+	}
+}
+
 # ── APEX (SERVER_NAME): well-known discovery + 301 redirect to the public site ──────────────────
 # The apex serves the Matrix server_name domain. .well-known/matrix/client is served here with
 # proper CORS/Content-Type headers (GitHub Pages at www can't set those). Everything else 301s to
 # the configured public site (the static landing site).
 http://{$SERVER_NAME}:8080 {
-	log
+	import access_log
 	import security_headers
 
 	# .well-known Matrix client discovery (CORS-open, cacheable).
@@ -67,7 +76,7 @@ http://{$SERVER_NAME}:8080 {
 
 # ── BACKEND (BACKEND_HOST): Matrix stack (Synapse + MAS + Controlplane + Cashier) ──────────────
 http://{$BACKEND_HOST}:8080 {
-	log
+	import access_log
 	import security_headers
 
 	# Administrative APIs are available only over telecrypt_net. The control-plane services use
@@ -136,6 +145,10 @@ http://{$BACKEND_HOST}:8080 {
 	}
 	# Cashier has no browser surface. DODO_WEBHOOK_PATH is a mode-600 ingress secret; Caddy rewrites
 	# that external capability URL to Cashier's canonical internal handler.
+	# Do not record this capability URL in access logs, including rejected methods. The path is
+	# deliberately generated outside this repository and is present only through env_file.
+	@dodo_webhook_path path {$DODO_WEBHOOK_PATH}
+	log_skip @dodo_webhook_path
 	@dodo_webhook {
 		method POST
 		path {$DODO_WEBHOOK_PATH}
@@ -144,12 +157,6 @@ http://{$BACKEND_HOST}:8080 {
 		uri replace {$DODO_WEBHOOK_PATH} /webhooks/dodo
 		reverse_proxy cashier:9011
 	}
-
-	# Future: LiveKit JWT service (staged off until VoIP wiring — see compose.yml lkjwt service)
-	# @lkjwt path /jwt /jwt/*
-	# handle @lkjwt {
-	# 	reverse_proxy lkjwt:8080
-	# }
 
 	# Everything else is outside the published application surface.
 	handle {

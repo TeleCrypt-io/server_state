@@ -215,31 +215,6 @@ services:
     env_file:
       - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/cashier.secrets.env
 
-  # ── lkjwt: LiveKit JWT service (Element Call). Staged off — only activate with
-  # `docker compose --profile voip up -d` after the LiveKit SFU, its webhook, Caddy route, and
-  # Matrix well-known RTC focus are wired. Version is deliberately an exact release tag.
-  lkjwt:
-    image: ghcr.io/element-hq/lk-jwt-service:0.5.0
-    profiles: ["voip"]
-    container_name: tc_lkjwt
-    restart: "no"
-    networks: [ telecrypt_net ]
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    read_only: true
-    user: "991:991"
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
-    environment:
-      - LIVEKIT_URL=${LIVEKIT_URL:-__CHANGEME__}
-      - LIVEKIT_KEY=${LIVEKIT_KEY:-__CHANGEME__}
-      - LIVEKIT_SECRET=${LIVEKIT_SECRET:-__CHANGEME__}
-      # Never use `*`: only local TeleCrypt users may create LiveKit rooms.
-      - LIVEKIT_FULL_ACCESS_HOMESERVERS=${SERVER_NAME:?set SERVER_NAME}
-      - LIVEKIT_JWT_BIND=:8080
-    depends_on: {}
-
 # Shared application network.
 networks:
   telecrypt_net:

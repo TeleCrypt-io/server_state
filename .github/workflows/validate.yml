@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -122,9 +122,13 @@ jobs:
               "HOMESERVER=https://backend.telecrypt.io",
               "MAS_BASE_URL=https://backend.telecrypt.io/auth",
               "PLAN_PUBLIC_URL=https://backend.telecrypt.io/plan",
-              "LIVEKIT_FULL_ACCESS_HOMESERVERS=telecrypt.io",
           ):
               assert value not in compose, value
+          for stale in ("lkjwt", "livekit", "LIVEKIT_", "voip"):
+              marker = stale.lower()
+              assert marker not in compose.lower(), stale
+              assert marker not in env_example.lower(), stale
+              assert marker not in caddyfile.lower(), stale
           for site in ("http://telecrypt.io", "http://backend.telecrypt.io"):
               assert site not in caddyfile, site
           synapse = Path("synapse.yaml").read_text(encoding="utf-8")
@@ -141,6 +145,10 @@ jobs:
           assert compose.count("BILLING_ENV=test") == 2
           assert "BILLING_ENV=production" not in compose
           assert "live.dodopayments.com" not in compose
+          assert caddyfile.count('request>uri regexp "[?].*" "?[REDACTED]"') == 1
+          assert caddyfile.count("import access_log") == 2
+          assert "@dodo_webhook_path path {$DODO_WEBHOOK_PATH}" in caddyfile
+          assert "log_skip @dodo_webhook_path" in caddyfile
           PY
 
       - name: Validate Compose

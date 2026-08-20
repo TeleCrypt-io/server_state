@@ -19,8 +19,19 @@ Public runtime configuration for the TeleCrypt Matrix service:
    commands from this public repository. Public source/config validation is performed by the
    repository workflow; the Harness performs the corresponding guarded VM preflight.
 
-`telecrypt.io` serves Matrix discovery and redirects ordinary web traffic to `www.telecrypt.io`.
-Matrix, MAS, registration, and Plan endpoints live at `backend.telecrypt.io`.
+The private `.env` must contain exactly one value for each of `MATRIX_DEPLOYMENT_ID`, `SERVER_NAME`,
+`BACKEND_HOST`, `PUBLIC_SITE_HOST`, `HOMESERVER`, `MAS_BASE_URL`, and `PLAN_PUBLIC_URL`. The
+deployment identity and all public URLs are selected per environment; the public MAS and Plan URLs
+must share the homeserver origin. The private Synapse and MAS configuration overlays must repeat
+the matching server name, homeserver, MAS issuer, and Plan URL because those applications read
+their YAML overlays rather than Compose environment variables. The deployment procedure verifies
+the `.env` contract before activation; it cannot derive or repair values inside those private
+overlays.
+
+The configured Matrix server name serves discovery and redirects ordinary web traffic to the
+configured public site. The configured backend host serves Matrix, MAS, registration, and Plan.
+The ingress container listens on an unprivileged port as a non-root user, has a read-only root
+filesystem, and receives only two private temporary directories needed by the official image.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's
 administrator API is bound only to its internal listener; it is not placed on the public web
@@ -33,13 +44,13 @@ to MAS where Matrix clients require them.
 
 ## Billing mode
 
-The production Matrix deployment currently uses Dodo's test environment while live billing is
-unavailable. `BILLING_ENV=test` is explicit, the Dodo API origin is the exact test origin, and MAS
-shows the Plan page at `https://backend.telecrypt.io/plan`. The Plan page displays a sandbox banner
+Every current deployment uses Dodo's test environment while live billing is unavailable.
+`BILLING_ENV=test` is explicit, the Dodo API origin is the exact test origin, and MAS shows the Plan
+page at the configured Plan URL. The Plan page displays a sandbox banner
 and Dodo's test-card instructions; card data is entered only on Dodo's hosted checkout page.
 
 Cashier and janitor must use the same `CONTROLPLANE_DB_URL`. Both bind that database permanently to
-`BILLING_ENV=test` and `MATRIX_DEPLOYMENT_ID=production` before serving or sweeping. A future live
+`BILLING_ENV=test` and the environment's explicit `MATRIX_DEPLOYMENT_ID` before serving or sweeping. A future live
 billing release must use a different database; changing keys or environment variables cannot
 silently reuse the test-billing state.
 

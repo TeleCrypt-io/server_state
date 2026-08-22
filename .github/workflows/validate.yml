@@ -71,6 +71,32 @@ jobs:
           assert images == [expected] * 3, images
           PY
 
+      - name: Verify exact Synapse and MAS release selection
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          compose = Path("compose.yml").read_text(encoding="utf-8")
+          expected = {
+              "synapse": "ghcr.io/telecrypt-io/telecrypt-synapse:1.158-tc2",
+              "mas": "ghcr.io/element-hq/matrix-authentication-service:1.23.0",
+          }
+          for service, image in expected.items():
+              block = re.search(
+                  rf"^  {service}:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:|\Z)",
+                  compose,
+                  flags=re.MULTILINE | re.DOTALL,
+              )
+              assert block, f"missing {service} service"
+              images = re.findall(
+                  r"^\s+image: ([^\s]+)$",
+                  block.group("body"),
+                  flags=re.MULTILINE,
+              )
+              assert images == [image], (service, images)
+          PY
+
       - name: Verify environment parameterization and Caddy privilege contract
         run: |
           python3 - <<'PY'
@@ -189,5 +215,5 @@ jobs:
         run: >-
           docker run --rm
           --entrypoint python
-          ghcr.io/telecrypt-io/telecrypt-synapse:1.155-tc1
+          ghcr.io/telecrypt-io/telecrypt-synapse:1.158-tc2
           -c 'from tier_controller import TierController; print(TierController.__name__)'

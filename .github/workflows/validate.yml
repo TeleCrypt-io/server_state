@@ -260,8 +260,11 @@ jobs:
       - name: Verify exact selected and published container artifacts
         run: |
           set -euo pipefail
+          umask 077
           images_file="$(mktemp)"
           auth_file="$(mktemp)"
+          # Skopeo expects to create the auth file; an empty pre-created file is invalid JSON.
+          rm -f "$auth_file"
           trap 'rm -f "$images_file" "$auth_file"' EXIT
           docker compose --env-file .env.example config --images | sort -u > "$images_file"
           python3 - "$images_file" <<'PY'
@@ -295,6 +298,8 @@ jobs:
               --username "$GITHUB_ACTOR" \
               --password-stdin \
               ghcr.io
+            test -f "$auth_file"
+            test "$(stat -c '%a' "$auth_file")" = 600
             while IFS= read -r image; do
               case "$image" in
                 ghcr.io/telecrypt-io/telecrypt-cashier:*)

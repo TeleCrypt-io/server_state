@@ -3,8 +3,9 @@
 # Design:
 #   - Rootless Docker. Apps drop to uid/gid 991; no privileged host ports.
 #   - TLS is terminated by an UPSTREAM reverse proxy; the shared Caddy speaks plain HTTP.
-#   - Persistent state and real secrets live outside this repository.
-#   - Each app merges its committed config with a gitignored secrets file at runtime.
+#   - Persistent state and real secrets live outside this repository under TELECRYPT_DATA_DIR.
+#   - Synapse and MAS merge committed base config, Harness runtime identity, and private secret
+#     config at runtime.
 #   - Media is stored in external S3; PostgreSQL is external to this Compose project.
 
 services:
@@ -30,17 +31,14 @@ services:
     ports:
       # Set INGRESS_BIND_ADDRESS in the server-only .env to the dedicated proxy-facing VM address.
       # The loopback default fails closed for a fresh checkout.
-      - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:${INGRESS_PORT:-8080}:8080"
+      - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:8080:8080"
     environment:
       - TRUSTED_PROXY=${TRUSTED_PROXY:-127.0.0.1/32}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
       - BACKEND_HOST=${BACKEND_HOST:?set BACKEND_HOST}
-      - PUBLIC_SITE_HOST=${PUBLIC_SITE_HOST:?set PUBLIC_SITE_HOST}
-      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
-      - MAS_BASE_URL=${MAS_BASE_URL:?set MAS_BASE_URL}
     # Contains only DODO_WEBHOOK_PATH, not a Dodo API key or webhook signature secret.
     env_file:
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/ingress.secrets.env
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/ingress.secrets.env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -50,11 +48,11 @@ services:
 
   # ── Matrix homeserver (official Synapse + exact external policy/S3 components) ───────────────
   synapse:
-    # `1.158-tc2` is this image's immutable operational tag. Its OCI provenance records Synapse
-    # 1.158.0, Matrix.org S3 provider 1.7.0, and Controlplane policy wheel 0.3.21; that provenance
+    # `1.159-tc2` is this image's immutable operational tag. Its OCI provenance records Synapse
+    # 1.159.0, Matrix.org S3 provider 1.7.0, and Controlplane policy wheel 0.4.0; that provenance
     # is independent of the Controlplane application release selected below. Do not replace it with
     # a bind mount or a startup package install.
-    image: ghcr.io/telecrypt-io/telecrypt-synapse:1.158-tc2
+    image: ghcr.io/telecrypt-io/telecrypt-synapse:1.159-tc2
     container_name: tc_synapse
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -64,14 +62,15 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     user: "991:991"
-    # Bypass the image's start.py so we can merge base config + gitignored secrets (two -c files).
+    # Bypass the image's start.py so we can merge public base, runtime identity, and private config.
     entrypoint: ["python", "-m", "synapse.app.homeserver"]
-    command: ["-c", "/homeserver.yaml", "-c", "/secrets.yaml"]
+    command: ["-c", "/homeserver.yaml", "-c", "/runtime-identity.yaml", "-c", "/secrets.yaml"]
     volumes:
       - ./synapse.yaml:/homeserver.yaml:ro
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse.identity.yaml:/runtime-identity.yaml:ro
       - ./synapse.log.config:/log.config:ro
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/synapse.secrets.yaml:/secrets.yaml:ro
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/synapse_signing.key:/signing.key:ro
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse.secrets.yaml:/secrets.yaml:ro
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse_signing.key:/signing.key:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/synapse/media_store:/data:rw
     healthcheck:
       test: ["CMD", "curl", "-fSs", "http://localhost:8008/health"]
@@ -83,7 +82,7 @@ services:
       mas:
         condition: service_started
 
-  # ── Matrix Authentication Service (MSC3861). Served under the configured MAS public base URL ─
+  # ── Matrix Authentication Service (MSC3861). Publicly served under /auth by Caddy. ───────────
   mas:
     image: ghcr.io/element-hq/matrix-authentication-service:1.23.0
     container_name: tc_mas
@@ -91,25 +90,25 @@ services:
     networks: [ telecrypt_net ]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    # MAS stores application state in external PostgreSQL; the official image has no writable
+    # data volume or filesystem contract, so deny root-filesystem writes at runtime.
+    read_only: true
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     user: "991:991"
-    command: ["server", "--config=/config.yaml", "--config=/secrets.yaml"]
-    environment:
-      - RUST_LOG=info
+    command: ["server", "--config=/config.yaml", "--config=/runtime-identity.yaml", "--config=/secrets.yaml"]
     volumes:
       - ./mas.yaml:/config.yaml:ro
-      - ./synapse.yaml:/homeserver.yaml:ro
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/mas.secrets.yaml:/secrets.yaml:ro
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/mas.identity.yaml:/runtime-identity.yaml:ro
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/mas.secrets.yaml:/secrets.yaml:ro
 
   # ── controlplane: public agent-registration shim (POST /redpill only, routed by Caddy). Privilege
   # boundary: holds NO credentials of any kind — no env_file at all. It drives MAS's public
   # registration form and public/native-client OAuth device flow over telecrypt_net; it never
-  # mints a Matrix compatibility token or calls m.login.password. (morpheus is gone entirely;
-  # see the controlplane repo README.) ─────────────────────────────────────────────────────────
+  # mints a Matrix password token or calls m.login.password. ────────────────────────────────────
   controlplane:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.21
+    image: ghcr.io/telecrypt-io/controlplane:0.4.0
     container_name: tc_controlplane
     restart: unless-stopped
     networks: [ telecrypt_net ]
@@ -121,22 +120,18 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     environment:
-      # Registration redirects must use MAS's browser-visible public base URL.
-      - MAS_BASE_URL=${MAS_BASE_URL:?set MAS_BASE_URL}
-      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
-      - PLAN_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
-      # SERVER_NAME keeps agent MXIDs on the configured Matrix identity domain.
+      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - IGNORED_PROXY_IP=${IGNORED_PROXY_IP:-}
     depends_on:
       mas:
         condition: service_started
 
   # ── janitor: the ONE component holding a standing MAS admin credential (lock stale
   # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
-  # port, no Caddy route, zero inbound surface. Invoked daily via systemd timer (RUN_ONCE=1). ──
+  # port, no Caddy route, zero inbound surface. The source derives the cashier-admin exclusion
+  # from SERVER_NAME; the one-shot job is invoked daily via systemd timer. ───────────────────────
   janitor:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.21
+    image: ghcr.io/telecrypt-io/controlplane:0.4.0
     container_name: tc_janitor
     restart: "no"
     networks: [ telecrypt_net ]
@@ -149,17 +144,12 @@ services:
       options: { max-size: "10m", max-file: "3" }
     command: ["/janitor"]
     environment:
-      - RUN_ONCE=1
-      - BILLING_ENV=test
-      - MATRIX_DEPLOYMENT_ID=${MATRIX_DEPLOYMENT_ID:?set MATRIX_DEPLOYMENT_ID}
+      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - MAS_BASE_URL=http://mas:8081
-      - EXCLUDE_MXIDS=@cashier_admin:${SERVER_NAME:?set SERVER_NAME}
-      - LOCK_AFTER_HOURS=48
-    # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, CONTROLPLANE_DB_URL, OWNER_EMAIL, SMTP_*.
+    # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, JANITOR_DB_URL, OWNER_EMAIL, SMTP_*.
     # env_file is read by the rootless Compose operator, not by the container uid.
     env_file:
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/locker.secrets.env
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/locker.secrets.env
     depends_on:
       mas:
         condition: service_started
@@ -167,7 +157,7 @@ services:
   # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
   steward:
-    image: ghcr.io/telecrypt-io/controlplane:0.3.21
+    image: ghcr.io/telecrypt-io/controlplane:0.4.0
     container_name: tc_steward
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]
@@ -180,14 +170,11 @@ services:
       options: { max-size: "10m", max-file: "3" }
     command: ["/steward"]
     environment:
-      - BILLING_ENV=test
+      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - HOMESERVER=${HOMESERVER:?set HOMESERVER}
-      - MAS_BASE_URL=http://mas:8080
-      - PLAN_PUBLIC_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
-      - CASHIER_INTERNAL_URL=http://cashier:9011
+      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
     env_file:
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/steward.secrets.env
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/steward.secrets.env
     depends_on:
       mas:
         condition: service_started
@@ -195,7 +182,7 @@ services:
   # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
   # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.2.5
+    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.3.0
     container_name: tc_cashier
     restart: unless-stopped
     networks: [ telecrypt_net, cashier_plan_net ]
@@ -207,18 +194,17 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     environment:
+      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - MATRIX_DEPLOYMENT_ID=${MATRIX_DEPLOYMENT_ID:?set MATRIX_DEPLOYMENT_ID}
-      # Synapse's admin API stays on telecrypt_net. Cashier has no browser/OIDC routes.
-      - SYNAPSE_ADMIN_URL=http://synapse:8008
-      - PLAN_PUBLIC_URL=${PLAN_PUBLIC_URL:?set PLAN_PUBLIC_URL}
+      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
+      # Cashier uses Synapse's fixed internal admin endpoint and has no browser/OIDC routes.
+    # cashier.secrets.env: CASHIER_DB_URL and Cashier/provider credentials.
     env_file:
-      - ${TELECRYPT_SECRETS_DIR:?set TELECRYPT_SECRETS_DIR}/cashier.secrets.env
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/cashier.secrets.env
 
 # Shared application network.
 networks:
   telecrypt_net:
     name: telecrypt_net
-    driver: bridge
   cashier_plan_net:
     internal: true

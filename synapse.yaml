@@ -1,10 +1,9 @@
 # Synapse — committed base config. Contains NO secrets.
-# Environment-specific and secret-bearing top-level keys (server_name, public_baseurl, database,
-# matrix_authentication_service, media_storage_providers, macaroon_secret_key, form_secret) live
-# WHOLLY in the gitignored secrets file
-# and are merged at runtime via the second `-c` flag.
+# The Harness writes public identity (server_name and public_baseurl) to a runtime layer before
+# Compose validation. Secret-bearing keys (database, matrix_authentication_service,
+# media_storage_providers, macaroon_secret_key, form_secret) live in the private overlay.
 
-signing_key_path: "/signing.key"          # provided from persistent_data/secrets (never committed)
+signing_key_path: "/signing.key"          # provided from TELECRYPT_DATA_DIR/secrets (never committed)
 pid_file: /data/homeserver.pid
 log_config: "/log.config"
 
@@ -19,8 +18,7 @@ listeners:
       - names: [client]              # federation resource dropped — federation disabled
         compress: false
 
-# server_name:                    -> in synapse.secrets.yaml (the Matrix identity domain)
-# public_baseurl:                 -> in synapse.secrets.yaml (the public homeserver URL)
+# server_name and public_baseurl: -> in the runtime identity layer
 # database:                       -> in synapse.secrets.yaml (host/user/db + password)
 # matrix_authentication_service:  -> in synapse.secrets.yaml (enabled, endpoint http://mas:8080, shared secret)
 # media_storage_providers:        -> in synapse.secrets.yaml (external S3 sss.telecrypt.io + keys)
@@ -54,7 +52,7 @@ user_types:
 
 # Fail-closed capability restrictions for unverified users (uploads, room cap, encryption).
 # Baked into the exact controlplane-owned Synapse image selected in compose.yml.
-# Its source, tests, and Synapse-version compatibility notes live in controlplane.
+# Its source and tests live in controlplane.
 modules:
   - module: tier_controller.TierController
     config:

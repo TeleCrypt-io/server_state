@@ -1,10 +1,10 @@
 # Matrix Authentication Service — committed base config. Contains NO secrets.
 # Secret-bearing top-level keys (secrets, database, matrix) live WHOLLY in the
-# gitignored secrets file, merged at runtime via the second `--config` flag.
+# gitignored secrets file, merged at runtime as the final `--config` layer.
 #
-# Environment-specific public MAS URLs and the Plan URI live in mas.secrets.yaml and are merged
-# at runtime via the second `--config` flag. Caddy and the controlplane receive the same public
-# values through the private Compose `.env`.
+# The Harness writes http.public_base, http.issuer, and
+# experimental.plan_management_iframe_uri to the runtime identity layer before Compose validation.
+# The private overlay contains secrets and application-specific settings only.
 
 http:
   listeners:
@@ -44,7 +44,7 @@ http:
 
 # Local passwords are accepted only by MAS's hosted OAuth human pages (for
 # registration, reauthentication, and recovery); Caddy denies Matrix
-# `/_matrix/client/*/login` compatibility authentication. Email is optional.
+# `/_matrix/client/*/login` password authentication. Email is optional.
 passwords:
   enabled: true
 
@@ -65,7 +65,7 @@ account:
   email_change_allowed: true
   displayname_change_allowed: true
 
-# experimental.plan_management_iframe_uri is supplied by mas.secrets.yaml.
+# experimental.plan_management_iframe_uri is supplied by the runtime identity layer.
 
 # email:   -> in mas.secrets.yaml (transport + SMTP creds)
 # clients: -> in mas.secrets.yaml (ULID client_ids + client_secrets; ULIDs must match policy below)

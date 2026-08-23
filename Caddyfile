@@ -45,7 +45,7 @@
 # ── APEX (SERVER_NAME): well-known discovery + 301 redirect to the public site ──────────────────
 # The apex serves the Matrix server_name domain. .well-known/matrix/client is served here with
 # proper CORS/Content-Type headers (GitHub Pages at www can't set those). Everything else 301s to
-# the configured public site (the static landing site).
+# the TeleCrypt landing site.
 http://{$SERVER_NAME}:8080 {
 	import access_log
 	import security_headers
@@ -58,10 +58,10 @@ http://{$SERVER_NAME}:8080 {
 	@well_known_client path /.well-known/matrix/client
 	handle @well_known_client {
 		respond `{
-			"m.homeserver": {"base_url": "{$HOMESERVER}"},
+			"m.homeserver": {"base_url": "https://{$BACKEND_HOST}"},
 			"org.matrix.msc2965.authentication": {
-				"issuer": "{$MAS_BASE_URL}/",
-				"account": "{$MAS_BASE_URL}/account"
+				"issuer": "https://{$BACKEND_HOST}/auth/",
+				"account": "https://{$BACKEND_HOST}/auth/account"
 			}
 		}`
 	}
@@ -70,7 +70,7 @@ http://{$SERVER_NAME}:8080 {
 
 	# Everything else → landing site on GitHub Pages.
 	handle {
-		redir https://{$PUBLIC_SITE_HOST}{uri} 301
+		redir https://www.telecrypt.io{uri} 301
 	}
 }
 
@@ -95,14 +95,14 @@ http://{$BACKEND_HOST}:8080 {
 		respond "Not Found" 404
 	}
 
-	# Legacy Matrix password compatibility login must never reach MAS or Synapse.
+	# Matrix password login must never reach MAS or Synapse.
 	# MAS-hosted /auth/login remains available for OAuth browser/device approval.
 	@matrix_compat_login path_regexp ^/_matrix/client/(.*)/login/?$
 	handle @matrix_compat_login {
 		respond "Not Found" 404
 	}
 
-	# Retain only MAS compatibility logout/refresh routes required by Matrix clients.
+	# Retain only MAS logout/refresh routes required by Matrix clients.
 	@mas_compat path_regexp ^/_matrix/client/(.*)/(logout|refresh)/?$
 	handle @mas_compat {
 		reverse_proxy mas:8080
@@ -136,10 +136,9 @@ http://{$BACKEND_HOST}:8080 {
 		respond "Method Not Allowed" 405
 	}
 
-	# Steward owns every browser route. Canonical Plan actions use /api/plan; retain /api/team
-	# for cached legacy pages until their compatibility window closes. Dodo card data is entered only
+	# Steward owns every browser route. Canonical Plan actions use /api/plan. Dodo card data is entered only
 	# on the provider-hosted checkout.
-	@plan path /plan /plan/* /api/plan /api/plan/* /api/team /api/team/*
+	@plan path /plan /plan/* /api/plan /api/plan/*
 	handle @plan {
 		reverse_proxy steward:9012
 	}

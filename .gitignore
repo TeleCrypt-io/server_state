@@ -1,5 +1,5 @@
 # ── Secrets & runtime state — NEVER commit ───────────────────────────────────
-# Real secrets live only in the operator-selected host secrets directory.
+# Real secrets live only in the private `TELECRYPT_DATA_DIR/secrets` directory.
 # This repo carries *.example templates only.
 
 # Environment / compose-level secrets

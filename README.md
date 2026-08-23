@@ -70,8 +70,9 @@ deployment operations and the secret-file contract.
 Every reviewed state change merged to `main` receives an immutable `server-state-<short-git-sha>` tag and
 GitHub Release record. It selects exact component image releases, which must already be published
 and verified. The state release is an identity for one configuration commit, not a package version.
-Controlplane and Cashier release images advertise config contract `1`; Harness verifies that label
-after authenticated pulls before activation.
+Controlplane and Cashier release images advertise config contract `1`. The public workflow verifies
+the Controlplane label and anonymously checks the public images; the authenticated Harness deploy
+preflight verifies Cashier's private image existence and label after pulling it before activation.
 
 ## Security and licence
 

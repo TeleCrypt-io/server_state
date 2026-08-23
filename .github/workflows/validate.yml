@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   validate:
@@ -260,12 +259,8 @@ jobs:
       - name: Verify exact selected and published container artifacts
         run: |
           set -euo pipefail
-          umask 077
           images_file="$(mktemp)"
-          auth_file="$(mktemp)"
-          # Skopeo expects to create the auth file; an empty pre-created file is invalid JSON.
-          rm -f "$auth_file"
-          trap 'rm -f "$images_file" "$auth_file"' EXIT
+          trap 'rm -f "$images_file"' EXIT
           docker compose --env-file .env.example config --images | sort -u > "$images_file"
           python3 - "$images_file" <<'PY'
           import sys
@@ -293,21 +288,11 @@ jobs:
           PY
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
             command -v skopeo
-            printf '%s' "$GHCR_TOKEN" | skopeo login \
-              --authfile "$auth_file" \
-              --username "$GITHUB_ACTOR" \
-              --password-stdin \
-              ghcr.io
-            test -f "$auth_file"
-            test "$(stat -c '%a' "$auth_file")" = 600
             while IFS= read -r image; do
               case "$image" in
                 ghcr.io/telecrypt-io/telecrypt-cashier:*)
-                  contract_label="$(skopeo inspect --authfile "$auth_file" \
-                    --format '{{ index .Labels "io.telecrypt.config-contract" }}' \
-                    "docker://$image")"
-                  test "$contract_label" = "1"
-                  echo "Verified Cashier config contract label on $image"
+                  echo "Deferred private Cashier existence and config-contract verification for $image" \
+                    "to the authenticated Harness deploy preflight"
                   continue
                   ;;
                 ghcr.io/telecrypt-io/controlplane:*)
@@ -322,8 +307,6 @@ jobs:
               esac
             done < "$images_file"
           fi
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate Caddy
         run: |

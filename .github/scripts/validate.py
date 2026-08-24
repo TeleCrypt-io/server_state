@@ -537,7 +537,13 @@ def validate_rendered(path: Path) -> None:
             check(settings["name"] == f"{document['name']}_{name}", (name, "network name"))
     check(set(document["secrets"]) == set(SECRET_ENV), "secret set")
     for name, variable in SECRET_ENV.items():
-        check(document["secrets"][name] == {"environment": variable}, name)
+        secret = document["secrets"][name]
+        check(
+            set(secret) <= {"environment", "name"}
+            and secret.get("environment") == variable
+            and secret.get("name") in {None, name, f"{document['name']}_{name}"},
+            (name, "secret source", secret),
+        )
     secret_mounts = {
         "synapse": {"synapse_secrets_json": ("/secrets.json", "991", "991", 0o400), "synapse_signing_key": ("/signing.key", "991", "991", 0o400)},
         "mas": {"mas_secrets_json": ("/secrets.json", "991", "991", 0o400)},

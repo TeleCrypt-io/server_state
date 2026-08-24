@@ -513,7 +513,15 @@ def validate_rendered(path: Path) -> None:
         check(settings.get("profiles", []) == (["janitor"] if service == "janitor" else []), (service, "profiles"))
     check(len(services["caddy"].get("ports", [])) == 1, "one Caddy binding")
     port = services["caddy"]["ports"][0]
-    check(set(port) == {"host_ip", "target", "published", "protocol", "mode"} and port["host_ip"] == env["INGRESS_BIND_ADDRESS"] and port["target"] == port["published"] == 8080 and port["protocol"] == "tcp" and port["mode"] == "ingress", port)
+    check(
+        set(port) == {"host_ip", "target", "published", "protocol", "mode"}
+        and port["host_ip"] == env["INGRESS_BIND_ADDRESS"]
+        and str(port["target"]) == "8080"
+        and str(port["published"]) == "8080"
+        and port["protocol"] == "tcp"
+        and port["mode"] == "ingress",
+        port,
+    )
     check(all("ports" not in services[s] for s in SERVICES if s != "caddy"), "unintended ports")
     for name, settings in networks.items():
         check(set(settings) <= {"internal", "name"}, (name, "network options"))

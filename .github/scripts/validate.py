@@ -574,7 +574,9 @@ def validate_rendered(path: Path) -> None:
     check(services["mas"].get("command") == ["server", "--config=/config.yaml", "--config=/secrets.json", "--config=/runtime-identity.yaml"], "MAS config order")
     check(services["janitor"].get("command") == ["/janitor"] and services["plan"].get("command") == ["/plan"], "service commands")
     for service in ("caddy", "mas", "registration", "janitor", "plan", "cashier"):
-        check("entrypoint" not in services[service], (service, "entrypoint override"))
+        # Compose's JSON model materializes an omitted entrypoint as null.  A non-null value
+        # would be an explicit service override and must remain rejected.
+        check(services[service].get("entrypoint") is None, (service, "entrypoint override"))
     for service in ("caddy", "registration", "cashier"):
         check("command" not in services[service], (service, "command override"))
     check(services["mas"].get("networks", {}).get("mas_admin_net", {}).get("aliases") == ["mas-admin"], "MAS admin alias")

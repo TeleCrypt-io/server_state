@@ -21,7 +21,7 @@ jobs:
       TELECRYPT_DATA_DIR: /tmp/telecrypt-data
       BILLING_ENVIRONMENT: test
       GIT_CONFIG_SYSTEM: /dev/null
-      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_GLOBAL: /tmp/telecrypt-gitconfig
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: credential.helper
@@ -331,7 +331,7 @@ jobs:
       packages: read
     env:
       GIT_CONFIG_SYSTEM: /dev/null
-      GIT_CONFIG_GLOBAL: /dev/null
+      GIT_CONFIG_GLOBAL: /tmp/telecrypt-gitconfig
       GIT_CONFIG_NOSYSTEM: "1"
       GIT_CONFIG_COUNT: "1"
       GIT_CONFIG_KEY_0: credential.helper

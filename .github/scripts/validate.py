@@ -524,7 +524,11 @@ def validate_rendered(path: Path) -> None:
     )
     check(all("ports" not in services[s] for s in SERVICES if s != "caddy"), "unintended ports")
     for name, settings in networks.items():
-        check(set(settings) <= {"internal", "name"}, (name, "network options", settings))
+        check(
+            set(settings) <= {"internal", "name", "ipam"}
+            and settings.get("ipam", {}) == {},
+            (name, "network options", settings),
+        )
         if name in INTERNAL_NETWORKS:
             check(settings.get("internal") is True, (name, "internal"))
         else:

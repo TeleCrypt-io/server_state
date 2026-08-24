@@ -108,6 +108,7 @@ class ManifestTests(unittest.TestCase):
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         document = yaml.safe_load(compose)
         synapse = document["services"]["synapse"]
+        self.assertEqual(validate.SERVICE_ENV_KEYS["synapse"], {"TMPDIR"})
         self.assertEqual(synapse["environment"], ["TMPDIR=/staging/tmp"])
         self.assertEqual(
             synapse["secrets"],

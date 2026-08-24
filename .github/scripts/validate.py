@@ -87,7 +87,7 @@ IMAGE_CONFIG = {
 }
 SERVICE_ENV_KEYS = {
     "caddy": {"TRUSTED_PROXY", "SERVER_NAME"},
-    "synapse": set(), "mas": set(),
+    "synapse": {"TMPDIR"}, "mas": set(),
     "registration": {"SERVER_NAME"}, "janitor": {"SERVER_NAME"},
     "plan": {"SERVER_NAME"}, "cashier": {"SERVER_NAME"},
 }

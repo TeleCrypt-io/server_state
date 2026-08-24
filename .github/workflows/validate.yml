@@ -124,7 +124,7 @@ jobs:
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"
-          .github/scripts/run_bounded_combined.sh "$synapse_output" docker compose --ansi never --env-file .env.example run --rm --no-deps \
+          if ! .github/scripts/run_bounded_combined.sh "$synapse_output" docker compose --ansi never --env-file .env.example run --rm --no-deps \
             --entrypoint python synapse -c '
           import os
           import json
@@ -150,7 +150,11 @@ jobs:
           for value in set(expected.values()) | {"ci-mas-secret-fixture"}:
               assert value not in environment.values(), value
           print("uid-991 secret mount readable with only Synapse grants")
-          ' || { echo "Synapse secret proof failed" >&2; exit 1; }
+          '; then
+            echo "Synapse secret proof failed; bounded redacted command output follows:" >&2
+            sed -E 's/ci-[[:alnum:]_.-]+/[fixture]/g' "$synapse_output" | tail -n 40 >&2
+            exit 1
+          fi
           output="$(<"$synapse_output")"
           test "$(tail -n 1 <<<"$output")" = "uid-991 secret mount readable with only Synapse grants"
           for marker in \

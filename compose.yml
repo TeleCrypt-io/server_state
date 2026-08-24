@@ -93,13 +93,13 @@ services:
         uid: "991"
         gid: "991"
         mode: 0400
-    environment:
-      - TMPDIR=/staging/tmp
       - source: synapse_signing_key
         target: /signing.key
         uid: "991"
         gid: "991"
         mode: 0400
+    environment:
+      - TMPDIR=/staging/tmp
     healthcheck:
       test: ["CMD", "curl", "-fSs", "http://localhost:8008/health"]
       interval: 15s

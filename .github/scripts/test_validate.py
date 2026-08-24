@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).parent))
 import validate  # noqa: E402
 
@@ -38,7 +40,9 @@ class ManifestTests(unittest.TestCase):
         for profile in (("stage.telecrypt.io", "live"), ("other.telecrypt.io", "test"), ("telecrypt.io", "sandbox")):
             with self.assertRaises(AssertionError):
                 validate.validate_profile({"SERVER_NAME": profile[0], "BILLING_ENVIRONMENT": profile[1]})
-        compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
+        compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(
+            encoding="utf-8"
+        )
         for service in ("caddy", "registration", "synapse", "mas"):
             body = validate.service_section(compose, service)
             self.assertNotIn("BILLING_ENVIRONMENT", body)
@@ -99,6 +103,31 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn('"transport":"disabled"', workflow)
         self.assertNotIn("SYNAPSE_SECRETS_YAML", workflow)
         self.assertNotIn("MAS_SECRETS_YAML", workflow)
+
+    def test_synapse_signing_key_is_a_secret_not_environment_data(self) -> None:
+        compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
+        document = yaml.safe_load(compose)
+        synapse = document["services"]["synapse"]
+        self.assertEqual(synapse["environment"], ["TMPDIR=/staging/tmp"])
+        self.assertEqual(
+            synapse["secrets"],
+            [
+                {
+                    "source": "synapse_secrets_json",
+                    "target": "/secrets.json",
+                    "uid": "991",
+                    "gid": "991",
+                    "mode": 0o400,
+                },
+                {
+                    "source": "synapse_signing_key",
+                    "target": "/signing.key",
+                    "uid": "991",
+                    "gid": "991",
+                    "mode": 0o400,
+                },
+            ],
+        )
 
     def test_manifest_has_exactly_five_versioned_images(self) -> None:
         values = validate.load_manifest()

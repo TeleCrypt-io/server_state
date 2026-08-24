@@ -77,22 +77,24 @@ services:
       options: { max-size: "10m", max-file: "3" }
     user: "991:991"
     tmpfs:
-      - /tmp:uid=991,gid=991,mode=1777
+      - /tmp:uid=991,gid=991,mode=1777,size=16m
     # Bypass the image's start.py so we can merge public base, private config, and SERVER_NAME-derived
     # runtime identity last; the final layer owns the public identity fields.
-    entrypoint: ["python", "-m", "synapse.app.homeserver"]
+    entrypoint: ["/telecrypt-synapse-entrypoint"]
     command: ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]
     volumes:
       - ./synapse.yaml:/homeserver.yaml:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse.identity.yaml:/runtime-identity.yaml:ro
       - ./synapse.log.config:/log.config:ro
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/synapse/media_store:/data:rw
+      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse-staging:/staging:rw
     secrets:
       - source: synapse_secrets_json
         target: /secrets.json
         uid: "991"
         gid: "991"
         mode: 0400
+    environment:
+      - TMPDIR=/staging/tmp
       - source: synapse_signing_key
         target: /signing.key
         uid: "991"

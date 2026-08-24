@@ -98,7 +98,7 @@ for _service in ("janitor", "plan", "cashier"):
     SERVICE_ENV_KEYS[_service].add("BILLING_ENVIRONMENT")
 EXPECTED_TMPFS = {
     "caddy": ["/config/caddy:uid=65532,gid=65532,mode=0700", "/data/caddy:uid=65532,gid=65532,mode=0700"],
-    "synapse": ["/tmp:uid=991,gid=991,mode=1777"],
+    "synapse": ["/tmp:uid=991,gid=991,mode=1777,size=16m"],
 }
 EXPECTED_LOGGING = {"driver": "json-file", "options": {"max-size": "10m", "max-file": "3"}}
 EXPECTED_HEALTHCHECKS = {
@@ -264,6 +264,11 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     check(proxies and all("import strip_untrusted_client_ip" in proxy for proxy in proxies), "proxy identity")
     plan = caddy[caddy.index("@plan path"):caddy.index("\n\t}", caddy.index("@plan path"))]
     check("reverse_proxy plan:9012" in plan and "cashier:9011" not in plan, "Plan boundary")
+    check(
+        "path_regexp ^/_matrix/media/(r0|v1|v3)/upload(/[^/]+/[^/]+)?/?$" in caddy
+        and "max_size 128MiB" in caddy,
+        "Caddy media upload body limit",
+    )
     check("path /agents" in caddy and "reverse_proxy registration:9009" in caddy, "Registration boundary")
     for field in ("request>headers>Authorization", "request>headers>Cookie", "request>headers>Proxy-Authorization", "resp_headers>Set-Cookie"):
         check(len(re.findall(rf"(?im)^\s*{re.escape(field)}\s+delete\s*$", caddy)) == 1, field)
@@ -354,8 +359,22 @@ def validate_source(values: dict[str, str]) -> None:
         check(text in caddy_body, ("Caddy", text))
     synapse = (ROOT / "synapse.yaml").read_text(encoding="utf-8")
     mas = (ROOT / "mas.yaml").read_text(encoding="utf-8")
-    check("names: [client]" in synapse and "max_upload_size: 128M" in synapse, "Synapse listeners/upload")
-    check("name: psycopg2" in synapse and "enabled: true" in synapse and "endpoint: http://mas:8080" in synapse, "Synapse committed loader options")
+    check(
+        "names: [client]" in synapse
+        and "max_upload_size: 128M" in synapse
+        and "media_store_path: /staging/media" in synapse
+        and "enable_local_media_storage: false" in synapse
+        and "pid_file: /tmp/homeserver.pid" in synapse,
+        "Synapse listeners/upload/staging",
+    )
+    check("url_preview_enabled: false" in synapse, "Synapse URL previews disabled")
+    check(
+        "name: psycopg2" in synapse
+        and "enabled: true" in synapse
+        and "endpoint: http://mas:8080" in synapse
+        and "media_store_path: /staging/media" in synapse,
+        "Synapse committed loader options",
+    )
     check(not re.search(r"^\s*(server_name|public_baseurl):", synapse, re.MULTILINE), "Synapse identity overlay")
     check(
         mas.count("- host: mas-edge\n          port: 8080") == 1
@@ -388,6 +407,13 @@ def validate_source(values: dict[str, str]) -> None:
     )
     check('test: ["CMD", "/cashier", "healthcheck"]' in sections["cashier"], "Cashier health")
     check("profiles: [janitor]" in sections["janitor"], "Janitor profile")
+    check(
+        "- TMPDIR=/staging/tmp" in sections["synapse"]
+        and "/runtime/synapse-staging:/staging:rw" in sections["synapse"]
+        and "/synapse/media_store:/data" not in sections["synapse"]
+        and "worker_app" not in compose,
+        "Synapse disposable staging boundary",
+    )
     validate_caddy(caddy, caddy_body)
     validate_caddy_negative(caddy, caddy_body)
     export(values)
@@ -517,7 +543,7 @@ def validate_rendered(path: Path) -> None:
         check(not services[service].get("volumes"), (service, "volume isolation"))
     expected_mounts = {
         "caddy": {"/etc/caddy/Caddyfile": (str(ROOT / "Caddyfile"), True)},
-        "synapse": {"/homeserver.yaml": (str(ROOT / "synapse.yaml"), True), "/runtime-identity.yaml": (f"{data_dir}/runtime/synapse.identity.yaml", True), "/log.config": (str(ROOT / "synapse.log.config"), True), "/data": (f"{data_dir}/synapse/media_store", False)},
+        "synapse": {"/homeserver.yaml": (str(ROOT / "synapse.yaml"), True), "/runtime-identity.yaml": (f"{data_dir}/runtime/synapse.identity.yaml", True), "/log.config": (str(ROOT / "synapse.log.config"), True), "/staging": (f"{data_dir}/runtime/synapse-staging", False)},
         "mas": {"/config.yaml": (str(ROOT / "mas.yaml"), True), "/runtime-identity.yaml": (f"{data_dir}/runtime/mas.identity.yaml", True)},
     }
     for service, expected in expected_mounts.items():
@@ -526,7 +552,7 @@ def validate_rendered(path: Path) -> None:
         for target, (source, read_only) in expected.items():
             item = found[target]
             check(item.get("type") == "bind" and item.get("source") == source and item.get("read_only", False) is read_only, (service, target))
-    check(services["synapse"].get("entrypoint") == ["python", "-m", "synapse.app.homeserver"] and services["synapse"].get("command") == ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"], "Synapse config order")
+    check(services["synapse"].get("entrypoint") == ["/telecrypt-synapse-entrypoint"] and services["synapse"].get("command") == ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"], "Synapse config order")
     check(services["mas"].get("command") == ["server", "--config=/config.yaml", "--config=/secrets.json", "--config=/runtime-identity.yaml"], "MAS config order")
     check(services["janitor"].get("command") == ["/janitor"] and services["plan"].get("command") == ["/plan"], "service commands")
     for service in ("caddy", "mas", "registration", "janitor", "plan", "cashier"):

@@ -158,6 +158,21 @@ http://backend.{$SERVER_NAME}:8080 {
 		}
 	}
 
+	# Keep the edge admission limit equal to Synapse's exact 128 MiB plaintext limit.
+	# The request body is bounded before it reaches the application or staging disk.
+	@media_upload {
+		method POST PUT
+		path_regexp ^/_matrix/media/(r0|v1|v3)/upload(/[^/]+/[^/]+)?/?$
+	}
+	handle @media_upload {
+		request_body {
+			max_size 128MiB
+		}
+		reverse_proxy synapse:8008 {
+			import strip_untrusted_client_ip
+		}
+	}
+
 	# … and everything under /auth (its UI, OAuth2, discovery, account).
 	# Strip the /auth prefix before forwarding — MAS serves everything at its root internally.
 	@mas path /auth /auth/*

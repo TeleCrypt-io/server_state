@@ -8,9 +8,10 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - Caddy HTTP ingress behind an external TLS terminator.
 - TeleCrypt services (Registration, Janitor, and Plan) plus private Cashier. Registration, Janitor,
   and Plan run from the `controlplane` image; the image/repository name is retained for release identity.
-- External PostgreSQL and S3-backed media storage; the provider synchronously stores both local
-  uploads and newly fetched remote media in S3. The VM media directory is disposable staging/cache,
-  not a durable media authority.
+- External PostgreSQL and S3-backed media storage; the provider synchronously stores local uploads
+  in S3 while remote-media fetching is disabled. The VM's
+  `${TELECRYPT_DATA_DIR}/runtime/synapse-staging` directory is disposable staging/cache, not a
+  durable media authority; the image entrypoint clears only that fixed mount at startup.
 
 ## Configuration and activation
 
@@ -71,7 +72,8 @@ egress attachments: Synapse and MAS on their separate egress networks, plus Regi
 and Janitor on their dedicated egress networks. Docker Engine 28+ and Compose 2.33.1+ are required; the
 workflow fails closed on older toolchains.
 Synapse's Web and CLI upload ceiling is the same 128 MiB limit; no separate upload-size variable is
-accepted. Extending that ceiling further requires a deliberate streaming design, including bounded
+accepted. Local media storage is disabled, `TMPDIR` points to the disk-backed staging mount, and
+only the 16 MiB `/tmp` tmpfs is RAM-backed. Extending that ceiling further requires a deliberate streaming design, including bounded
 stream handling and end-to-end verification; it must not be raised by changing one setting.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's

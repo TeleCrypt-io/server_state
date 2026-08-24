@@ -4,7 +4,7 @@
 # nonsecret loader options are committed here. The final identity layer owns public identity fields.
 
 signing_key_path: "/signing.key"          # provided from TELECRYPT_DATA_DIR/secrets (never committed)
-pid_file: /data/homeserver.pid
+pid_file: /tmp/homeserver.pid
 log_config: "/log.config"
 
 # Plain HTTP; TLS terminated upstream → Caddy → here. x_forwarded trusts X-Forwarded-* headers.
@@ -29,15 +29,17 @@ matrix_authentication_service:
   # secret -> in synapse.secrets.json
 
 # media_storage_providers (external S3 s3.telecrypt.io + private bucket/credentials, storing
-# both local uploads and newly fetched remote media synchronously) -> synapse.secrets.json
+# local uploads synchronously; remote media is disabled) -> synapse.secrets.json
 # macaroon_secret_key and form_secret -> synapse.secrets.json
 
 # Local media staging/cache dir. S3 is the durable media authority; this path is disposable and
-# must not be treated as a durable media copy. Path is the mount root to avoid double-nesting.
-media_store_path: /data
+# must not be treated as a durable media copy. The image entrypoint clears only this fixed mount.
+media_store_path: /staging/media
+enable_local_media_storage: false
 max_upload_size: 128M
 max_image_pixels: "32M"
 dynamic_thumbnails: false
+url_preview_enabled: false
 
 # Federation fully disabled: empty whitelist = federate with nobody (blocks inbound and outbound).
 # trusted_key_servers kept explicitly empty so Synapse does NOT fall back to the matrix.org default.
@@ -65,6 +67,7 @@ modules:
   - module: tier_controller.TierController
     config:
       restricted_room_cap: 3
+      media_store_path: /staging/media
 
 # Modern client features (Element X / sliding sync / Element Call delay events).
 experimental_features:

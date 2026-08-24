@@ -578,7 +578,8 @@ def validate_rendered(path: Path) -> None:
         # would be an explicit service override and must remain rejected.
         check(services[service].get("entrypoint") is None, (service, "entrypoint override"))
     for service in ("caddy", "registration", "cashier"):
-        check("command" not in services[service], (service, "command override"))
+        # As with entrypoint above, Compose serializes an omitted command as null.
+        check(services[service].get("command") is None, (service, "command override"))
     check(services["mas"].get("networks", {}).get("mas_admin_net", {}).get("aliases") == ["mas-admin"], "MAS admin alias")
     check(services["janitor"].get("profiles") == ["janitor"] and services["janitor"].get("restart") == "no", "Janitor profile")
     check(all(services[s].get("restart") == "unless-stopped" for s in SERVICES if s != "janitor"), "service restart")

@@ -72,10 +72,11 @@
 	abort @untrusted_ingress_peer
 }
 
-# ── APEX (SERVER_NAME): well-known discovery + 301 redirect to the public site ──────────────────
+# ── APEX (SERVER_NAME): well-known discovery + production-only landing redirect ─────────────────
 # The apex serves the Matrix server_name domain. .well-known/matrix/client is served here with
-# proper CORS/Content-Type headers (GitHub Pages at www can't set those). Everything else 301s to
-# the TeleCrypt landing site.
+# proper CORS/Content-Type headers (GitHub Pages at www can't set those). Only the production
+# profile redirects ordinary requests to the landing site; stage has no public website and returns
+# a bounded 404 instead of redirecting into production.
 http://{$SERVER_NAME}:8080 {
 	import ingress_peer_gate
 	import access_log
@@ -102,10 +103,15 @@ http://{$SERVER_NAME}:8080 {
 
 	# No /.well-known/matrix/server — federation is disabled.
 
-	# Everything else → landing site on GitHub Pages.
-	# Drop the query string so callback codes or other secrets cannot be carried to the landing site.
-		handle {
-			redir https://www.telecrypt.io{http.request.uri.path} 301
+	# The public website exists only for the production profile. Match the literal production
+	# identity so a stage deployment cannot redirect users or credentials into production.
+	@production_apex host telecrypt.io
+	handle @production_apex {
+		# Drop the query string so callback codes or other secrets cannot be carried to the landing site.
+		redir https://www.telecrypt.io{http.request.uri.path} 301
+	}
+	handle {
+		respond "Not Found" 404
 	}
 }
 

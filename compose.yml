@@ -218,7 +218,7 @@ services:
       - MAS_ADMIN_CLIENT_SECRET=${MAS_ADMIN_CLIENT_SECRET:?set MAS_ADMIN_CLIENT_SECRET}
       - JANITOR_DB_URL=${JANITOR_DB_URL:?set JANITOR_DB_URL}
       # Dry-run mode is an explicit safety switch; Controlplane rejects missing, empty, or invalid
-      # values and forbids dry-run mode on the production server name.
+      # values; test billing profiles may use dry-run, while live billing may not.
       - OWNER_EMAIL=${OWNER_EMAIL:-}
       - JANITOR_DRY_RUN=${JANITOR_DRY_RUN:?set JANITOR_DRY_RUN}
       - SMTP_HOST=${SMTP_HOST:-}

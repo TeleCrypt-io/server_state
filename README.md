@@ -41,11 +41,12 @@ identity layer supplies the Janitor admin-client ID. The committed base configs 
 nonsecret loader options, while credentials, database URIs, OAuth client secrets, and provider
 values remain outside this repository.
 
-The configured Matrix server name serves discovery and redirects ordinary web traffic to the
-production-only landing site at `https://www.telecrypt.io`. The only accepted public identities are
-the exact production and future stage names; their backend and Storage hosts derive directly from
-`SERVER_NAME`, while billing mode derives only from `BILLING_ENVIRONMENT`. Neither is a separate
-provider or secret-file override.
+The configured Matrix server name serves discovery. Only the production profile redirects ordinary
+web traffic to the production-only landing site at `https://www.telecrypt.io`; the stage profile has
+no public website and returns a bounded 404 for other apex requests. The only accepted public
+identities are the exact production and future stage names; their backend and Storage hosts derive
+directly from `SERVER_NAME`, while billing mode derives only from `BILLING_ENVIRONMENT`. Neither is
+a separate provider or secret-file override.
 Registration has no host publication and is attached to a dedicated Caddy edge network plus its
 own outbound network; its public-URL calls do not expose it to the other application services.
 MAS's admin listener is bound to the private `mas_admin_net`, which contains only MAS and Janitor.
@@ -117,9 +118,10 @@ Plan, Janitor, and Cashier receive their own snapshotted private keys plus the v
 environment value; Caddy receives only its proxy and server identity values.
 Janitor's MAS-admin credentials, database URL, and explicit `JANITOR_DRY_RUN` selector are always
 required in the guarded Compose process environment. The selector must be exactly `0` or `1`; its
-absence or emptiness is rejected, and Controlplane forbids `1` for the production server name.
-Owner email and SMTP values remain required by Controlplane for a real sweep and may be empty only
-for an explicitly selected test dry run.
+absence or emptiness is rejected. A dry run is allowed for either test profile (`SERVER_NAME` set to
+`telecrypt.io` or `stage.telecrypt.io` with `BILLING_ENVIRONMENT=test`) and is rejected for the live billing profile.
+Owner email and SMTP values remain required by Controlplane for a real sweep
+and may be empty only for an explicitly selected test dry run.
 
 The fixed `/webhooks/dodo` endpoint is proxied unchanged to Cashier; Cashier's Dodo signature
 verification is the authentication boundary. Switching to live billing requires a separately

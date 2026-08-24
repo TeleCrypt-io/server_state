@@ -50,6 +50,15 @@ class ManifestTests(unittest.TestCase):
             body = validate.service_section(compose, service)
             self.assertIn("BILLING_ENVIRONMENT=${BILLING_ENVIRONMENT:?set BILLING_ENVIRONMENT}", body)
 
+    def test_janitor_dry_run_policy_is_documented_for_test_profiles(self) -> None:
+        readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+        self.assertIn("either test profile", readme)
+        self.assertIn("rejected for the", readme)
+        self.assertIn("live billing profile", readme)
+        compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
+        janitor = validate.service_section(compose, "janitor")
+        self.assertIn("test billing profiles may use dry-run, while live billing may not", janitor)
+
     def test_plan_secret_name_is_scoped_and_legacy_name_is_absent(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")

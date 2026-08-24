@@ -204,7 +204,9 @@ def derived_backend_host(env_text: str) -> str:
 
 def derived_public_site_host(env_text: str) -> str:
     name = _server_name(assignments(env_text))
-    return f"www.{name}"
+    # The landing site is production-only. Stage has no public website and must
+    # never derive or redirect to a stage-named landing host.
+    return "www.telecrypt.io" if name == "telecrypt.io" else ""
 
 
 def service_section(compose: str, service: str) -> str:
@@ -258,7 +260,13 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     backend = caddy[caddy.index("http://backend.{$SERVER_NAME}:8080 {"):]
     check("@mas path /auth /auth/*" in backend and "@plan path /plan /plan/* /api/plan /api/plan/*" in backend, "backend routes")
     check(not re.search(r"(?i)frame-ancestors\s+(?:['\"]?\*['\"]?|https?://[^;[:space:]]+)", caddy), "frame policy")
-    check("redir https://www.telecrypt.io{http.request.uri.path} 301" in caddy and "www.{$SERVER_NAME}" not in caddy, "site redirect")
+    check(
+        "@production_apex host telecrypt.io" in caddy
+        and "redir https://www.telecrypt.io{http.request.uri.path} 301" in caddy
+        and 'respond "Not Found" 404' in caddy
+        and "www.{$SERVER_NAME}" not in caddy,
+        "production-only site redirect",
+    )
     check(not any("{query}" in line or "{http.request.uri}" in line for line in caddy.splitlines() if "www.telecrypt.io" in line), "redirect query")
     proxies = re.findall(r"(?ms)^\s*reverse_proxy [^\n]+ \{.*?^\s*\}", caddy)
     check(proxies and all("import strip_untrusted_client_ip" in proxy for proxy in proxies), "proxy identity")
@@ -353,7 +361,12 @@ def validate_source(values: dict[str, str]) -> None:
     )
     for service in ("caddy", "registration", "synapse", "mas"):
         check("BILLING_ENVIRONMENT" not in sections[service], (service, "billing isolation"))
-    check(derived_backend_host(env_text) == f"backend.{env['SERVER_NAME']}" and derived_public_site_host(env_text) == f"www.{env['SERVER_NAME']}", "derived hosts")
+    expected_public_site = "www.telecrypt.io" if env["SERVER_NAME"] == "telecrypt.io" else ""
+    check(
+        derived_backend_host(env_text) == f"backend.{env['SERVER_NAME']}"
+        and derived_public_site_host(env_text) == expected_public_site,
+        "derived hosts",
+    )
     check(not any(f"{name}=" in env_text for name in SECRET_ENV.values()), "secret variable in operator environment")
     for text in ('user: "65532:65532"', "read_only: true", 'security_opt: ["no-new-privileges:true"]', 'cap_drop: ["ALL"]'):
         check(text in caddy_body, ("Caddy", text))

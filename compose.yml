@@ -57,10 +57,11 @@ services:
       - mas
     # No healthcheck: liveness is monitored by HAProxy's backend `check`.
 
-  # ── Matrix homeserver (official Synapse + exact external policy/S3 components) ───────────────
+  # ── Matrix homeserver (TeleCrypt Synapse + exact external policy/S3 components) ─────────────
   synapse:
-    # This image's reviewed operational tag carries Synapse, the Matrix.org S3 provider, and the
-    # Controlplane policy wheel. Do not replace it with a bind mount or a startup package install.
+    # This image's reviewed operational tag carries the pinned TeleCrypt Synapse and S3-provider
+    # forks plus the Controlplane policy wheel. Do not replace it with a bind mount or a startup
+    # package install.
     image: ${SYNAPSE_IMAGE:?set SYNAPSE_IMAGE}
     restart: unless-stopped
     networks:

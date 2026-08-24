@@ -3,76 +3,156 @@
 Public runtime configuration for the TeleCrypt Matrix service:
 
 - Synapse homeserver with closed federation.
-- A controlplane-owned, exact-version Synapse policy-module image.
+- A TeleCrypt Synapse image containing the exact-version Controlplane policy-module wheel.
 - Matrix Authentication Service (MAS / MSC3861).
 - Caddy HTTP ingress behind an external TLS terminator.
-- TeleCrypt control-plane services (`controlplane`, `janitor`, and `steward`) plus private Cashier.
-- External PostgreSQL and S3-backed encrypted media.
+- TeleCrypt services (Registration, Janitor, and Plan) plus private Cashier. Registration, Janitor,
+  and Plan run from the `controlplane` image; the image/repository name is retained for release identity.
+- External PostgreSQL and S3-backed media storage; the provider synchronously stores both local
+  uploads and newly fetched remote media in S3. The VM media directory is disposable staging/cache,
+  not a durable media authority.
 
 ## Configuration and activation
 
-1. Obtain the private deployment procedure and secret-file contract from TeleCrypt Harness.
+1. Obtain the private deployment procedure and secret-file contract from the TeleCrypt Harness
+   maintained by the operator.
 2. Use the Harness guarded activator for every production validation and activation. It verifies
-   the exact immutable state release, validates rendered Compose and Caddy configuration, pulls
-   released images, activates with `--no-build`, and records the result.
+   the exact state release, rendered Compose and Caddy configuration, published images,
+   `--no-build` activation, and the result record.
 3. Do not run direct `docker compose pull`, `up`, `run`, or equivalent production activation
-   commands from this public repository. Public source/config validation is performed by the
-   repository workflow; the Harness performs the corresponding guarded VM preflight.
+   commands from this public repository. The repository workflow validates public state; Harness
+   performs the guarded VM preflight and owns private environment and secret handling.
 
-The private `.env` must contain exactly one value for each of `SERVER_NAME`, `BACKEND_HOST`, and
-`BILLING_ENV`, plus `TELECRYPT_DATA_DIR` and the ingress binding values.
-The deployment procedure derives the public backend origin as `https://${BACKEND_HOST}` and keeps
-MAS at `/auth` and Plan at `/plan`; those paths are fixed in Compose rather than repeated as
-operator-supplied URLs. Secret files are read from the mode-600
-`TELECRYPT_DATA_DIR/secrets` directory. Harness writes the nonsecret Synapse and MAS identity
-layers under `TELECRYPT_DATA_DIR/runtime` before Compose validation; private overlays contain
-secret and application-specific settings only.
+`versions.env` is the canonical image coordinate manifest and must contain exactly these five keys:
+`CADDY_IMAGE`, `SYNAPSE_IMAGE`, `MAS_IMAGE`, `CONTROLPLANE_IMAGE`, and `CASHIER_IMAGE`. The private
+environment, derived backend and public-site hostnames, ingress binding, identity overlays, and
+secret-file contract are maintained by the operator's private Harness. Harness snapshots the
+private Janitor, Plan, and Cashier records and exports each service's exact environment contract
+only to the guarded Compose process; Compose does not read live service `env_file` paths. The
+committed `.env.example` contains TEST-NET documentation values only; replace them through the private
+deployment procedure before activation.
 
-The configured Matrix server name serves discovery and redirects ordinary web traffic to
-`https://www.telecrypt.io`. The configured backend host serves Matrix, MAS, registration, and Plan.
-The ingress container listens on an unprivileged port as a non-root user, has a read-only root
-filesystem, and receives only two private temporary directories needed by the official image.
+The Matrix private inputs are `synapse.secrets.json` and `mas.secrets.json`; Harness validates their
+bounded JSON contracts before passing them as `/secrets.json` Compose config layers. The MAS overlay
+contains only its encryption/signing secrets, database URI, Matrix shared secret, and two exact
+environment-bound clients. Email and policy defaults remain in `mas.yaml`; the final runtime
+identity layer supplies the Janitor admin-client ID. The committed base configs retain reviewed
+nonsecret loader options, while credentials, database URIs, OAuth client secrets, and provider
+values remain outside this repository.
+
+The configured Matrix server name serves discovery and redirects ordinary web traffic to the
+production-only landing site at `https://www.telecrypt.io`. The only accepted public identities are
+the exact production and future stage names; their backend and Storage hosts derive directly from
+`SERVER_NAME`, while billing mode derives only from `BILLING_ENVIRONMENT`. Neither is a separate
+provider or secret-file override.
+Registration has no host publication and is attached to a dedicated Caddy edge network plus its
+own outbound network; its public-URL calls do not expose it to the other application services.
+MAS's admin listener is bound to the private `mas_admin_net`, which contains only MAS and Janitor.
+MAS's internal/admin API listener is reached through the network-scoped `mas-admin` alias, which exists
+only on that private network. The pinned distroless MAS image's Compose healthcheck validates configuration
+only; it cannot prove that either listener is accepting connections. Janitor is therefore excluded
+from the default Compose start. Harness checks OIDC discovery and Plan readiness before starting the
+one-shot `janitor` profile against the active exact state, without recreating or restarting MAS and
+with the equivalent of Compose `--no-deps`.
+Every service runs as its image-supported non-root UID/GID with no new privileges and all Linux
+capabilities dropped. Each root filesystem is read-only; only Caddy's two private temporary
+directories, Synapse's UID-991 `/tmp`, and Synapse's external media directory are writable. Only
+Caddy publishes the unprivileged 8080 ingress port. It reaches each routed upstream through a
+dedicated internal edge network; Synapse and MAS share only their required peer network, Plan shares
+only its MAS and Cashier peer networks, Synapse and MAS share only the internal `synapse_mas_net` peer
+network (retaining Compose service DNS) and use separate non-internal `synapse_egress_net` and
+`mas_egress_net` paths, Cashier
+has separate Plan, Synapse-admin, and external-egress paths, and Janitor's MAS-admin and external-egress
+paths remain separate. Synapse's 8008 listener
+must serve Caddy, MAS, and Cashier on their distinct peer networks, so it remains container-interface
+bound; it has no host-published port and no fixed network addresses are assigned.
+Deterministic default-route selection uses Compose `gw_priority: 1` on exactly five non-internal
+egress attachments: Synapse and MAS on their separate egress networks, plus Registration, Cashier,
+and Janitor on their dedicated egress networks. Docker Engine 28+ and Compose 2.33.1+ are required; the
+workflow fails closed on older toolchains.
+Synapse's Web and CLI upload ceiling is the same 128 MiB limit; no separate upload-size variable is
+accepted. Extending that ceiling further requires a deliberate streaming design, including bounded
+stream handling and end-to-end verification; it must not be raised by changing one setting.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's
-administrator API is bound only to its internal listener; it is not placed on the public web
-listener and is not routed by Caddy.
+administrator API is bound only to its private listener and network; it is not placed on the public
+web listener and is not routed by Caddy. The external TLS terminator must discard any
+client-supplied forwarding headers, then append the observed client address and
+`X-Forwarded-Proto: https` before forwarding to Caddy. Caddy strictly trusts only the exact
+configured proxy host address for forwarded protocol and client context; Registration receives no
+derived client-IP identity header. The guarded activation must verify RootlessKit 3.0 or newer with
+built-in TCP source-address propagation and rootless Docker's userland-proxy disabled, then prove the
+actual transport peer and forwarded-protocol behavior live; other rootless publish paths do not satisfy
+the Caddy `remote_ip` boundary.
+MAS's web listener binds only the network-scoped `mas-edge`, `mas-synapse`, and `mas-plan` endpoint
+aliases; its admin listener remains on `mas-admin` alone. Harness supplies the public URL and issuer
+in the final identity layer. MAS's `trusted_proxies` list is explicitly empty because that setting
+only controls whether MAS accepts `X-Forwarded-For` for client-IP rate limiting and logging; leaving
+it out would restore MAS's broad private-range defaults. MAS consequently sees Caddy as the source
+for those IP-based limits/logs, while peer services cannot spoof a client address through MAS.
+The guarded Harness must reject `TRUSTED_PROXY` values that are ranges, lists, or host bits: only
+one canonical IPv4 address with `/32` or IPv6 address with `/128` is accepted.
 
 MAS's hosted `/auth/login` remains available for OAuth browser and device authorization. Caddy
 returns `404` for public `/_matrix/client/*/login`, so Matrix password authentication is
 unavailable. Only logout and refresh routes remain routed to MAS where Matrix clients require them.
 
-## Billing mode
+## Billing identity
 
-`BILLING_ENV` is explicit and must be exactly `test` or `production`. The Dodo API origin and
-Cashier's identity checks derive from that value; MAS shows the Plan page at the fixed `/plan` URL.
-Test mode displays a sandbox banner and Dodo's test-card instructions; card data is entered only on
-Dodo's hosted checkout page.
+`SERVER_NAME` owns public, Matrix, database-name, and OIDC topology. `BILLING_ENVIRONMENT` is the
+separate explicit Dodo mode. Only these profiles are valid: `telecrypt.io` plus `test` (temporary
+v1 acceptance), `stage.telecrypt.io` plus `test` (later isolated test), and `telecrypt.io` plus
+`live` (launched production). Every other name, value, or pair is rejected; credentials and
+ambient endpoint overrides never select a profile. Test deployments display a sandbox banner and
+Dodo's test-card instructions; card data is entered only on Dodo's hosted checkout page.
 
 Cashier uses `CASHIER_DB_URL`; Janitor uses `JANITOR_DB_URL`. The credentials may differ, but both
-URLs must target the same PostgreSQL host, port, and database. Cashier owns the private billing
-schema; the owner-managed Janitor role is read-only for its sweep. Both services enforce the same
-explicit `BILLING_ENV`.
+URLs must target the same PostgreSQL host, port, and database. Synapse and MAS use that exact same
+owner-managed PostgreSQL host and port while retaining their own derived database names and roles.
+Cashier owns the private billing schema; the owner-managed Janitor role is read-only for its sweep.
+Plan, Janitor, and Cashier receive their own snapshotted private keys plus the validated
+`SERVER_NAME` and `BILLING_ENVIRONMENT`. Caddy, Registration, Synapse, and MAS receive no billing
+environment value; Caddy receives only its proxy and server identity values.
+Janitor's MAS-admin credentials, database URL, and explicit `JANITOR_DRY_RUN` selector are always
+required in the guarded Compose process environment. The selector must be exactly `0` or `1`; its
+absence or emptiness is rejected, and Controlplane forbids `1` for the production server name.
+Owner email and SMTP values remain required by Controlplane for a real sweep and may be empty only
+for an explicitly selected test dry run.
 
-The Dodo webhook is a generated private capability URL held only in the VM's mode-600
-`ingress.secrets.env`; it is never committed to this repository. Switching to live billing
-requires a separately reviewed immutable release, live-only keys/product/webhook, and
-`BILLING_ENV=production`.
+The fixed `/webhooks/dodo` endpoint is proxied unchanged to Cashier; Cashier's Dodo signature
+verification is the authentication boundary. Switching to live billing requires a separately
+reviewed exact release and live-only keys/product/webhook material.
 
-The Dodo API origin is derived from `BILLING_ENV`; it is not a separate state or secret-file
-setting. Keep provider credentials and webhook material in the cashier and ingress secret files.
+The Dodo API origin is selected only from the validated `BILLING_ENVIRONMENT`; it is not a separate
+state or secret-file setting. Keep provider credentials and webhook signature material in the owner's private secret store
+or VM secret input, never in Harness source; Harness snapshots and passes them only to Cashier's
+guarded Compose process.
 
 ## Releases
 
 This repository contains declarative state only. It publishes no packages, images, deployment
-tooling, secret templates, binaries, wheels, or other artifacts. The private Harness owns
-deployment operations and the secret-file contract.
+tooling, secret templates, binaries, or wheels. Each exact state Release carries one deterministic
+JSON manifest binding the five selected image coordinates to their observed registry digests; the
+three first-party image entries also carry their immutable product-release source, tag, independently
+resolved annotated tag SHA and peeled commit, exact release body, and canonical digest-asset identity. The
+private Harness owns deployment operations and the secret-file contract.
 
-Every reviewed state change merged to `main` receives an immutable `server-state-<short-git-sha>` tag and
-GitHub Release record. It selects exact component image releases, which must already be published
-and verified. The state release is an identity for one configuration commit, not a package version.
-Controlplane and Cashier release images advertise config contract `1`. The public workflow verifies
-the Controlplane label and anonymously checks the public images; the authenticated Harness deploy
-preflight verifies Cashier's private image existence and label after pulling it before activation.
+A deliberately pushed, reviewed state tag receives an exact `server-state-<short-git-sha>` GitHub
+Release record through a draft-first flow: the workflow verifies the complete draft metadata and
+asset bytes before publishing, and resumes only an exact draft. A pre-existing published Release is
+refused. It
+selects exact component image releases, which must already be published and verified. The Release's single JSON asset binds those selected tags to their observed canonical
+registry digests for Harness preflight. `versions.env` is the one canonical image coordinate manifest
+with exactly the five image keys used by Compose (`CADDY_IMAGE`, `SYNAPSE_IMAGE`, `MAS_IMAGE`,
+`CONTROLPLANE_IMAGE`, and `CASHIER_IMAGE`); the workflow
+rejects any Compose image tag, first-party image label, default command, entrypoint, user, route, or
+public-origin contract that differs from the selected release contract. The state release is an
+identity for one configuration commit, not a package version. Controlplane and Cashier release
+images advertise config contract `1`, and trusted exact state-tag runs of the public workflow
+authenticate to GHCR to verify both first-party images as well as the public images; main and
+pull-request runs receive the exact local contract checks without registry credentials. Do not change
+`versions.env` or `compose.yml` independently; update their exact coordinates and contracts together
+in one reviewed exact state change.
 
 ## Security and licence
 

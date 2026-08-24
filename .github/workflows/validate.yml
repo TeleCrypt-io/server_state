@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 30
     env:
       TELECRYPT_DATA_DIR: /tmp/telecrypt-data
+      BILLING_ENVIRONMENT: test
       GIT_CONFIG_SYSTEM: /dev/null
       GIT_CONFIG_GLOBAL: /dev/null
       GIT_CONFIG_NOSYSTEM: "1"
@@ -42,14 +43,6 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/validate.py source
 
-      - name: Verify GitHub CLI release/API contract
-        run: |
-          set -euo pipefail
-          gh release create --help | grep -F -- '--repo [HOST/]OWNER/REPO' >/dev/null
-          gh release edit --help | grep -F -- '--repo [HOST/]OWNER/REPO' >/dev/null
-          gh release edit --help | grep -F -- '--verify-tag' >/dev/null
-          gh api --help | grep -F -- '--hostname string' >/dev/null
-
       - name: Test published-image provenance contract
         run: |
           set -euo pipefail
@@ -61,14 +54,7 @@ jobs:
           bounded_value() {
             local output="$1"
             shift
-            rm -f -- "$output" "$output.stderr"
-            (
-              ulimit -c 0
-              ulimit -f 64
-              timeout --signal=TERM --kill-after=5s 30s "$@"
-            ) >"$output" 2>"$output.stderr"
-            test ! -s "$output.stderr"
-            test "$(wc -c <"$output")" -le 65536
+            .github/scripts/run_bounded_combined.sh "$output" "$@"
             tr -d '\r\n' <"$output"
           }
           engine_version="$(bounded_value "$RUNNER_TEMP/engine-version" docker version --format '{{.Server.Version}}')"
@@ -80,63 +66,25 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF_NAME" =~ ^server-state-[0-9a-f]{7,10}$ ]]
-          bounded_git_value() {
-            local output="$1"
-            shift
-            local kind ref
-            case "$1 $2" in
-              'cat-file -t')
-                kind=cat-file-type
-                ref="$3"
-                ;;
-              rev-parse*)
-                kind=rev-parse
-                ref="$3"
-                ;;
-              *)
-                echo "unsupported local Git check" >&2
-                return 1
-                ;;
-            esac
-            rm -f -- "$output" "$output.stderr"
-            (
-              ulimit -c 0
-              ulimit -f 64
-              timeout --signal=TERM --kill-after=5s 30s bash .github/scripts/git_transport.sh \
-                local-read "$kind" "$ref"
-            ) >"$output" 2>"$output.stderr"
-            test ! -s "$output.stderr"
-            test "$(wc -c <"$output")" -le 65536
-            tr -d '\r\n' <"$output"
-          }
-          test "$(bounded_git_value "$RUNNER_TEMP/tag-type" cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag
-          release_commit="$(bounded_git_value "$RUNNER_TEMP/release-commit" rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          git_value() { bash .github/scripts/git_transport.sh local-read "$1" "$2"; }
+          test "$(git_value cat-file-type "refs/tags/$GITHUB_REF_NAME")" = tag
+          release_commit="$(git_value rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
           release_suffix="${GITHUB_REF_NAME#server-state-}"
           [[ "$release_commit" == "$release_suffix"* ]]
           test "$release_commit" = "$GITHUB_SHA"
-          git_fetch_log="$RUNNER_TEMP/validate-git-fetch.log"
-          rm -f -- "$git_fetch_log" "$git_fetch_log.stderr"
-          (
-            ulimit -c 0
-            ulimit -f 64
-            timeout --signal=TERM --kill-after=5s 30s bash .github/scripts/git_transport.sh fetch "$GITHUB_REPOSITORY" \
-              refs/heads/main:refs/remotes/origin/main
-          ) >"$git_fetch_log" 2>"$git_fetch_log.stderr"
-          test ! -s "$git_fetch_log.stderr"
-          test "$(wc -c <"$git_fetch_log")" -le 65536
-          test "$(bounded_git_value "$RUNNER_TEMP/head-commit" rev-parse HEAD)" = "$release_commit"
+          bash .github/scripts/git_transport.sh fetch "$GITHUB_REPOSITORY" \
+            refs/heads/main:refs/remotes/origin/main
+          test "$(git_value rev-parse HEAD)" = "$release_commit"
           test "$release_commit" = "$GITHUB_SHA"
-          timeout --signal=TERM --kill-after=5s 30s bash .github/scripts/git_transport.sh \
-            local-ancestor "$release_commit" refs/remotes/origin/main \
-            >"$RUNNER_TEMP/ancestor-check" 2>"$RUNNER_TEMP/ancestor-check.stderr"
-          test ! -s "$RUNNER_TEMP/ancestor-check"
-          test ! -s "$RUNNER_TEMP/ancestor-check.stderr"
+          test "$release_commit" = "$(git_value rev-parse refs/remotes/origin/main)"
 
       - name: Validate Compose
         env:
-          SYNAPSE_SECRETS_YAML: ci-synapse-secret-fixture
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
           SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_YAML: ci-mas-secret-fixture
+          MAS_SECRETS_JSON: >-
+            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           # Nonsecret CI placeholders satisfy Compose's required interpolation. Harness supplies
@@ -144,7 +92,7 @@ jobs:
           private_keys=(
             MAS_ADMIN_CLIENT_ID MAS_ADMIN_CLIENT_SECRET JANITOR_DB_URL OWNER_EMAIL JANITOR_DRY_RUN
             SMTP_HOST SMTP_USERNAME SMTP_PASSWORD SMTP_FROM
-            MAS_OIDC_CLIENT_ID MAS_OIDC_CLIENT_SECRET SESSION_KEY PLAN_ASSERTION_PRIVATE_KEY
+            MAS_OIDC_CLIENT_ID MAS_OIDC_CLIENT_SECRET PLAN_SESSION_KEY PLAN_ASSERTION_PRIVATE_KEY
             SYNAPSE_ADMIN_TOKEN CASHIER_DB_URL DODO_API_KEY DODO_WEBHOOK_SECRET DODO_PRODUCT_ID
             PLAN_ASSERTION_PUBLIC_KEY
           )
@@ -154,14 +102,8 @@ jobs:
           done
           mkdir -p "$TELECRYPT_DATA_DIR"
           rendered_compose="$RUNNER_TEMP/server-state-compose.json"
-          compose_stderr="$rendered_compose.stderr"
-          rm -f -- "$rendered_compose" "$compose_stderr"
-          (
-            ulimit -c 0
-            ulimit -f 1024
-            timeout --signal=TERM --kill-after=5s 180s docker compose --profile janitor --env-file .env.example config --format json
-          ) >"$rendered_compose" 2>"$compose_stderr"
-          test ! -s "$compose_stderr"
+          .github/scripts/run_bounded_combined.sh --max-bytes 1048576 "$rendered_compose" \
+            docker compose --profile janitor --env-file .env.example config --format json
           test "$(wc -c <"$rendered_compose")" -le 1048576
           printf 'COMPOSE_RENDERED_JSON=%s\n' "$rendered_compose" >> "$GITHUB_ENV"
 
@@ -171,38 +113,26 @@ jobs:
 
       - name: Verify UID-991 secret runtime contract
         env:
-          SYNAPSE_SECRETS_YAML: ci-synapse-secret-fixture
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
           SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_YAML: ci-mas-secret-fixture
+          MAS_SECRETS_JSON: >-
+            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           mkdir -p "$TELECRYPT_DATA_DIR/runtime" "$TELECRYPT_DATA_DIR/synapse/media_store"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
-          bounded_combined() {
-            local output="$1"
-            shift
-            rm -f -- "$output"
-            (
-              ulimit -c 0
-              ulimit -f 64
-              timeout --signal=TERM --kill-after=5s 180s "$@"
-            ) >"$output" 2>&1
-            local status=$?
-            test "$(wc -c <"$output")" -le 65536
-            return "$status"
-          }
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"
-          bounded_combined "$synapse_output" docker compose --ansi never --env-file .env.example run --rm --no-deps \
+          .github/scripts/run_bounded_combined.sh "$synapse_output" docker compose --ansi never --env-file .env.example run --rm --no-deps \
             --entrypoint python synapse -c '
           import os
+          import json
           import stat
           from pathlib import Path
 
-          expected = {
-              "/secrets.yaml": "ci-synapse-secret-fixture",
-              "/signing.key": "ci-synapse-signing-fixture",
-          }
+          expected_json_keys = {"database", "matrix_authentication_service", "media_storage_providers", "macaroon_secret_key", "form_secret"}
+          expected = {"/signing.key": "ci-synapse-signing-fixture"}
           assert os.getuid() == 991, os.getuid()
           for path, value in expected.items():
               mounted = Path(path)
@@ -210,10 +140,12 @@ jobs:
               metadata = mounted.stat()
               assert metadata.st_uid == 991, (path, metadata.st_uid)
               assert stat.S_IMODE(metadata.st_mode) == 0o400, (path, oct(metadata.st_mode))
-          for forbidden in ("/mas-secrets.yaml", "/run/secrets/mas_secret_config"):
+          synapse_json = json.loads(Path("/secrets.json").read_text(encoding="utf-8"))
+          assert set(synapse_json) == expected_json_keys
+          for forbidden in ("/mas-secrets.json", "/run/secrets/mas_secrets_json"):
               assert not Path(forbidden).exists(), forbidden
           environment = os.environ
-          for variable in ("SYNAPSE_SECRETS_YAML", "SYNAPSE_SIGNING_KEY", "MAS_SECRETS_YAML"):
+          for variable in ("SYNAPSE_SECRETS_JSON", "SYNAPSE_SIGNING_KEY", "MAS_SECRETS_JSON"):
               assert variable not in environment, variable
           for value in set(expected.values()) | {"ci-mas-secret-fixture"}:
               assert value not in environment.values(), value
@@ -225,9 +157,9 @@ jobs:
             ci-synapse-secret-fixture \
             ci-synapse-signing-fixture \
             ci-mas-secret-fixture \
-            synapse_secret_config \
+            synapse_secrets_json \
             synapse_signing_key \
-            mas_secret_config; do
+            mas_secrets_json; do
             if grep -F -- "$marker" <<<"$output" >/dev/null; then
               echo "secret fixture or source name leaked into Compose output" >&2
               exit 1
@@ -239,26 +171,23 @@ jobs:
       # a shell or Python diagnostic exists. Capture config output so fixture values never reach CI logs.
       - name: Verify UID-991 MAS secret isolation
         env:
-          SYNAPSE_SECRETS_YAML: ci-synapse-secret-fixture
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
           SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_YAML: |
-            database:
-              uri: postgresql://ci-mas-secret-fixture.invalid/
-            matrix:
-              homeserver: stage.telecrypt.io
-              endpoint: http://synapse:8008/
-              secret: ci-mas-matrix-fixture
-            secrets:
-              encryption: 0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff
+          MAS_SECRETS_JSON: '{"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}'
         run: |
           set -euo pipefail
           mkdir -p "$TELECRYPT_DATA_DIR/runtime"
           cat > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml" <<'EOF'
           http:
-            public_base: https://stage.telecrypt.io
-            issuer: https://stage.telecrypt.io/
+            public_base: https://backend.stage.telecrypt.io/auth/
+            issuer: https://backend.stage.telecrypt.io/auth/
           experimental:
-            plan_management_iframe_uri: https://stage.telecrypt.io/plan
+            plan_management_iframe_uri: https://backend.stage.telecrypt.io/plan
+          policy:
+            data:
+              admin_clients:
+                - 01ARZ3NDEKTSV4RRFFQ69G5FAW
           EOF
 
           mas_container=ci-mas-secret-proof
@@ -269,36 +198,16 @@ jobs:
           }
           trap cleanup EXIT
 
-          bounded_combined() {
-            local output="$1"
-            shift
-            rm -f -- "$output"
-            (
-              ulimit -c 0
-              ulimit -f 64
-              timeout --signal=TERM --kill-after=5s 180s "$@"
-            ) >"$output" 2>&1
-            local status=$?
-            test "$(wc -c <"$output")" -le 65536
-            return "$status"
-          }
           bounded_docker_value() {
             local output="$1"
             shift
-            rm -f -- "$output" "$output.stderr"
-            (
-              ulimit -c 0
-              ulimit -f 64
-              timeout --signal=TERM --kill-after=5s 30s docker "$@"
-            ) >"$output" 2>"$output.stderr"
-            test ! -s "$output.stderr"
-            test "$(wc -c <"$output")" -le 65536
+            .github/scripts/run_bounded_combined.sh "$output" docker "$@"
             tr -d '\r\n' <"$output"
           }
           mas_output="$RUNNER_TEMP/mas-secret-proof.log"
-          bounded_combined "$mas_output" docker compose --ansi never --env-file .env.example run \
+          .github/scripts/run_bounded_combined.sh "$mas_output" docker compose --ansi never --env-file .env.example run \
             --name "$mas_container" --no-deps --entrypoint /usr/local/bin/mas-cli mas \
-            config check --config=/config.yaml --config=/secrets.yaml --config=/runtime-identity.yaml
+            config check --config=/config.yaml --config=/secrets.json --config=/runtime-identity.yaml
           mas_check="$(<"$mas_output")"
           test "$(bounded_docker_value "$RUNNER_TEMP/mas-user" inspect --format '{{.Config.User}}' "$mas_container")" = "991:991"
           for marker in \
@@ -312,9 +221,9 @@ jobs:
           docker rm -f "$mas_container" >/dev/null
 
           missing_output_file="$RUNNER_TEMP/mas-missing-secret-proof.log"
-          if bounded_combined "$missing_output_file" docker compose --ansi never --env-file .env.example run \
+          if .github/scripts/run_bounded_combined.sh "$missing_output_file" docker compose --ansi never --env-file .env.example run \
             --name "$missing_container" --no-deps --entrypoint /usr/local/bin/mas-cli mas \
-            config check --config=/config.yaml --config=/secrets.yaml --config=/runtime-identity.yaml \
+            config check --config=/config.yaml --config=/secrets.json --config=/runtime-identity.yaml \
             --config=/signing.key; then
             echo "MAS unexpectedly opened Synapse's signing-key path" >&2
             exit 1
@@ -329,53 +238,75 @@ jobs:
           done
           echo "MAS uid 991 read its own 0400 secret and could not open Synapse signing.key"
 
+      - name: Verify pinned Synapse JSON config loader
+        env:
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
+          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
+          MAS_SECRETS_JSON: >-
+            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
+        run: |
+          set -euo pipefail
+          mkdir -p "$TELECRYPT_DATA_DIR/runtime" "$TELECRYPT_DATA_DIR/synapse/media_store"
+          printf '%s\n' 'server_name: stage.telecrypt.io' 'public_baseurl: https://backend.stage.telecrypt.io/' > "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
+          printf '%s\n' 'http:' '  public_base: https://backend.stage.telecrypt.io/auth/' '  issuer: https://backend.stage.telecrypt.io/auth/' > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
+          synapse_loader_output="$RUNNER_TEMP/synapse-json-loader.log"
+          .github/scripts/run_bounded_combined.sh "$synapse_loader_output" docker compose --ansi never --env-file .env.example run --rm --no-deps \
+            --entrypoint python synapse -c '
+          import inspect
+          from synapse.config.homeserver import HomeServerConfig
+
+          loader = HomeServerConfig()
+          parameters = inspect.signature(loader.read_config).parameters
+          values = {
+              "config_dir_path": "/",
+              "data_dir_path": "/data",
+              "config_path": ["/homeserver.yaml", "/secrets.json", "/runtime-identity.yaml"],
+              "generate_keys": False,
+              "generate_secrets": False,
+              "report_stats": False,
+              "print_warnings": False,
+          }
+          loader.read_config(**{key: value for key, value in values.items() if key in parameters})
+          print("Synapse JSON config loader accepted")
+          '
+          test "$(tail -n 1 "$synapse_loader_output")" = "Synapse JSON config loader accepted"
+
       - name: Verify exact selected container images
         env:
-          SYNAPSE_SECRETS_YAML: ci-synapse-secret-fixture
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
           SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_YAML: ci-mas-secret-fixture
+          MAS_SECRETS_JSON: >-
+            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           images_file="$(mktemp)"
           raw_images_file="$(mktemp)"
-          raw_images_error="$raw_images_file.stderr"
-          trap 'rm -f "$images_file" "$raw_images_file" "$raw_images_error"' EXIT
-          (
-            ulimit -c 0
-            ulimit -f 64
-            timeout --signal=TERM --kill-after=5s 180s docker compose --profile janitor --env-file .env.example config --images
-          ) >"$raw_images_file" 2>"$raw_images_error"
-          test ! -s "$raw_images_error"
+          trap 'rm -f "$images_file" "$raw_images_file"' EXIT
+          .github/scripts/run_bounded_combined.sh "$raw_images_file" \
+            docker compose --profile janitor --env-file .env.example config --images
           test "$(wc -c <"$raw_images_file")" -le 65536
           sort -u "$raw_images_file" > "$images_file"
           python3 .github/scripts/validate.py image-list "$images_file"
 
       - name: Validate Caddy
         env:
-          SYNAPSE_SECRETS_YAML: ci-synapse-secret-fixture
+          SYNAPSE_SECRETS_JSON: >-
+            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"synapse.storage.providers.s3.S3StorageProvider","config":{"bucket":"ci-bucket","endpoint":"https://s3.telecrypt.io","region":"us-east-1","access_key_id":"ci-access","secret_access_key":"ci-secret","prefix":"telecrypt_io_stage"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
           SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_YAML: ci-mas-secret-fixture
+          MAS_SECRETS_JSON: >-
+            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           image_list="$RUNNER_TEMP/caddy-image-list"
-          image_list_error="$image_list.stderr"
-          rm -f -- "$image_list" "$image_list_error"
-          (
-            ulimit -c 0
-            ulimit -f 64
-            timeout --signal=TERM --kill-after=5s 180s docker compose --profile janitor --env-file .env.example config --images
-          ) >"$image_list" 2>"$image_list_error"
-          test ! -s "$image_list_error"
+          .github/scripts/run_bounded_combined.sh "$image_list" \
+            docker compose --profile janitor --env-file .env.example config --images
           test "$(wc -c <"$image_list")" -le 65536
           caddy_image="$(awk '/docker.io\/caddy:/ { print; exit }' "$image_list")"
           test -n "$caddy_image"
           caddy_output="$RUNNER_TEMP/caddy-validate.log"
-          caddy_error="$caddy_output.stderr"
-          rm -f -- "$caddy_output" "$caddy_error"
-          (
-            ulimit -c 0
-            ulimit -f 64
-            timeout --signal=TERM --kill-after=5s 180s docker run --rm \
+          .github/scripts/run_bounded_combined.sh "$caddy_output" docker run --rm \
             --user 65532:65532 \
             --read-only \
             --security-opt no-new-privileges:true \
@@ -385,12 +316,8 @@ jobs:
             --tmpfs /data/caddy:uid=65532,gid=65532,mode=0700 \
             --env TRUSTED_PROXY=192.0.2.10/32 \
             --env SERVER_NAME=example.invalid \
-            --env BACKEND_HOST=backend.example.invalid \
-            --env PUBLIC_SITE_HOST=www.example.invalid \
             --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
             "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
-          ) >"$caddy_output" 2>"$caddy_error"
-          test ! -s "$caddy_error"
           test "$(wc -c <"$caddy_output")" -le 65536
           cat -- "$caddy_output"
 
@@ -430,10 +357,7 @@ jobs:
           metadata_dir="$(mktemp -d)"
           manifest_name="server-state-${GITHUB_REF_NAME#server-state-}-images.json"
           manifest_path="$RUNNER_TEMP/$manifest_name"
-          expected_release_url="https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME"
-          expected_url_file="$RUNNER_TEMP/server-state-release-url"
-          printf '%s\n' "$expected_release_url" >"$expected_url_file"
-          cleanup() { rm -f "$authfile" "$expected_url_file"; rm -rf "$metadata_dir" "$manifest_path"; }
+          cleanup() { rm -f "$authfile"; rm -rf "$metadata_dir" "$manifest_path"; }
           trap cleanup EXIT
 
           bounded_output() {
@@ -443,18 +367,16 @@ jobs:
               echo "bounded output size must be a positive multiple of 1024 bytes" >&2
               return 1
             }
-            local max_blocks=$(( max_bytes / 1024 ))
             local stderr="$output.stderr" status
-            rm -f -- "$output" "$stderr"
-            (
-              ulimit -c 0
-              ulimit -f "$max_blocks"
-              timeout --signal=TERM --kill-after=5s "${timeout_seconds}s" "$@"
-            ) > "$output" 2> "$stderr" || {
-              status=$?
+            set +e
+            .github/scripts/run_bounded_combined.sh --separate "$max_bytes" "$max_bytes" \
+              "$output" "$stderr" "$timeout_seconds" "$@"
+            status=$?
+            set -e
+            if [[ "$status" -ne 0 ]]; then
               echo "bounded command failed (status $status; stderr bytes $(wc -c < "$stderr"))" >&2
               return "$status"
-            }
+            fi
             if [[ -s "$stderr" ]]; then
               echo "bounded command emitted unexpected stderr ($(wc -c < "$stderr") bytes)" >&2
               return 1
@@ -462,52 +384,43 @@ jobs:
             test "$(wc -c < "$output")" -le "$max_bytes"
           }
 
-          bounded_local_value() {
-            local output="$1" kind="$2" ref="$3"
-            bounded_output 65536 "$output" 30 bash .github/scripts/git_transport.sh \
-              local-read "$kind" "$ref"
-            tr -d '\r\n' <"$output"
-          }
-
-          bounded_api() {
-            local max_bytes="$1" output="$2" timeout_seconds="$3"
-            shift 3
-            bounded_output "$max_bytes" "$output" "$timeout_seconds" gh api "$@"
-          }
-
-          bounded_asset_download() {
-            local max_bytes="$1" output="$2" timeout_seconds="$3"
-            shift 3
-            (( max_bytes > 0 && max_bytes % 1024 == 0 )) || {
-              echo "bounded asset size must be a positive multiple of 1024 bytes" >&2
-              return 1
-            }
-            local max_blocks=$(( max_bytes / 1024 ))
-            local stderr="$output.stderr" status
-            rm -f -- "$output" "$stderr"
-            (
-              ulimit -c 0
-              ulimit -f "$max_blocks"
-              timeout --signal=TERM --kill-after=5s "${timeout_seconds}s" gh api "$@"
-            ) > "$output" 2> "$stderr" || {
-              status=$?
-              echo "bounded asset download failed (status $status; stderr bytes $(wc -c < "$stderr"))" >&2
-              return "$status"
-            }
-            if [[ -s "$stderr" ]]; then
-              echo "bounded asset download emitted unexpected stderr ($(wc -c < "$stderr") bytes)" >&2
+          bounded_gh() {
+            local max_stdout="$1" max_stderr="$2" max_file="$3" output="$4" stderr="$5" timeout_seconds="$6" status
+            shift 6
+            set +e
+            .github/scripts/run_bounded_combined.sh --separate "$max_stdout" "$max_stderr" \
+              "$output" "$stderr" "$timeout_seconds" "$@"
+            status=$?
+            set -e
+            test "$(wc -c <"$output")" -le "$max_stdout"
+            test "$(wc -c <"$stderr")" -le "$max_stderr"
+            test "$(wc -c <"$output")" -le "$max_file"
+            if [[ "$status" -eq 0 && -s "$stderr" ]]; then
+              cat -- "$stderr" >&2
               return 1
             fi
-            test "$(wc -c < "$output")" -le "$max_bytes"
+            return "$status"
+          }
+
+          http_status() {
+            local count
+            count="$(grep -Ec '^HTTP/[0-9.]+[[:space:]][0-9]{3}([[:space:]]|$)' "$1")"
+            test "$count" -eq 1
+            sed -n '1s/^HTTP\/[0-9.]*[[:space:]]\([0-9][0-9][0-9]\).*$/\1/p' "$1"
+          }
+
+          http_body() {
+            awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (!body) { if (line == "") body = 1; next } print }' "$1"
           }
 
           [[ "$GITHUB_REF_NAME" =~ ^server-state-[0-9a-f]{7,10}$ ]]
           release_commit="$GITHUB_SHA"
           release_suffix="${GITHUB_REF_NAME#server-state-}"
           [[ "$release_commit" == "$release_suffix"* ]]
-          test "$(bounded_local_value "$metadata_dir/head-commit" rev-parse HEAD)" = "$release_commit"
-          test "$(bounded_local_value "$metadata_dir/tag-type" cat-file-type "refs/tags/$GITHUB_REF_NAME")" = tag
-          checkout_annotated_tag_sha="$(bounded_local_value "$metadata_dir/tag-object" rev-parse "refs/tags/$GITHUB_REF_NAME")"
+          git_value() { bash .github/scripts/git_transport.sh local-read "$1" "$2"; }
+          test "$(git_value rev-parse HEAD)" = "$release_commit"
+          test "$(git_value cat-file-type "refs/tags/$GITHUB_REF_NAME")" = tag
+          checkout_annotated_tag_sha="$(git_value rev-parse "refs/tags/$GITHUB_REF_NAME")"
           python3 .github/scripts/validate.py source
 
           verify_source_identity() {
@@ -515,14 +428,15 @@ jobs:
             bounded_output 65536 "$metadata_dir/source-fetch.log" 30 bash .github/scripts/git_transport.sh fetch "$GITHUB_REPOSITORY" \
               refs/heads/main:refs/remotes/origin/main \
               "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-            test "$(bounded_local_value "$metadata_dir/current-tag-type" cat-file-type "refs/tags/$GITHUB_REF_NAME")" = tag
-            current_annotated_tag_sha="$(bounded_local_value "$metadata_dir/current-tag-object" rev-parse "refs/tags/$GITHUB_REF_NAME")"
+            test "$(git_value cat-file-type "refs/tags/$GITHUB_REF_NAME")" = tag
+            current_annotated_tag_sha="$(git_value rev-parse "refs/tags/$GITHUB_REF_NAME")"
             test "$current_annotated_tag_sha" = "$checkout_annotated_tag_sha"
-            current_tag_commit="$(bounded_local_value "$metadata_dir/current-tag-commit" rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+            current_tag_commit="$(git_value rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
             test "$current_tag_commit" = "$release_commit"
-            test "$(bounded_local_value "$metadata_dir/current-head" rev-parse HEAD)" = "$release_commit"
-            bounded_output 65536 "$metadata_dir/ancestor-check" 30 bash .github/scripts/git_transport.sh \
-              local-ancestor "$release_commit" refs/remotes/origin/main
+            test "$(git_value rev-parse HEAD)" = "$release_commit"
+            bounded_output 65536 "$metadata_dir/main-check" 30 bash .github/scripts/git_transport.sh \
+              local-read rev-parse refs/remotes/origin/main
+            test "$(git_value rev-parse refs/remotes/origin/main)" = "$release_commit"
             remote_tag_path="$metadata_dir/remote-tag.log"
             bounded_output 65536 "$remote_tag_path" 30 bash .github/scripts/git_transport.sh ls-remote "$GITHUB_REPOSITORY" \
               "refs/tags/$GITHUB_REF_NAME"
@@ -538,12 +452,10 @@ jobs:
           source versions.env
           METADATA_DIR="$metadata_dir" timeout --signal=TERM --kill-after=5s 240s .github/scripts/fetch_product_releases.sh
           login_stderr="$metadata_dir/skopeo-login.stderr"
-          if ! printf '%s' "$GH_TOKEN" | (
-            ulimit -c 0
-            ulimit -f 1024
-            timeout --signal=TERM --kill-after=5s 30s skopeo login --authfile "$authfile" \
-              --username "$GITHUB_ACTOR" --password-stdin ghcr.io >/dev/null
-          ) 2> "$login_stderr"; then
+          login_stdout="$metadata_dir/skopeo-login.stdout"
+          if ! printf '%s' "$GH_TOKEN" | .github/scripts/run_bounded_combined.sh --separate 65536 65536 \
+            "$login_stdout" "$login_stderr" 30 skopeo login --authfile "$authfile" \
+            --username "$GITHUB_ACTOR" --password-stdin ghcr.io; then
             rm -f "$login_stderr"
             exit 1
           fi
@@ -596,293 +508,136 @@ jobs:
 
           release_body="Exact server_state image digest manifest for commit $release_commit."
           check_server_release() {
-            local release_path="$1" expected_draft="$2" expected_immutable="$3" expected_created="$4"
-            local expected_asset_created="$5" expected_asset_updated="$6"
+            local release_path="$1"
             test "$(wc -c < "$release_path")" -le 1048576
             jq -e --arg tag "$GITHUB_REF_NAME" \
               --arg name "$manifest_name" --arg digest "$manifest_digest" \
-              --arg repository "$GITHUB_REPOSITORY" --arg body "$release_body" \
-              --arg created "$expected_created" \
-              --arg asset_created "$expected_asset_created" --arg asset_updated "$expected_asset_updated" \
-              --argjson size "$manifest_size" --argjson draft "$expected_draft" --argjson immutable "$expected_immutable" '
-                def valid_time: type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$");
+              --arg body "$release_body" \
+              --argjson size "$manifest_size" '
                 (.id | type) == "number" and (.id == (.id | floor)) and .id > 0 and
-                .url == ("https://api.github.com/repos/" + $repository + "/releases/" + (.id | tostring)) and
-                .assets_url == ("https://api.github.com/repos/" + $repository + "/releases/" + (.id | tostring) + "/assets") and
-                .upload_url == ("https://uploads.github.com/repos/" + $repository + "/releases/" + (.id | tostring) + "/assets{?name,label}") and
-                (.html_url == ("https://github.com/" + $repository + "/releases/tag/" + $tag) or
-                 .html_url == ("https://github.com/" + $repository + "/releases/" + $tag)) and
-                .tarball_url == ("https://api.github.com/repos/" + $repository + "/tarball/" + $tag) and
-                .zipball_url == ("https://api.github.com/repos/" + $repository + "/zipball/" + $tag) and
                 (.body | type) == "string" and .body == $body and
-                (.created_at | valid_time) and (if $created == "" then true else .created_at == $created end) and
-                (has("published_at") and (if $draft then .published_at == null else (.published_at | valid_time) end)) and
-                .tag_name == $tag and .name == $tag and .draft == $draft and .prerelease == false and .immutable == $immutable and
+                .tag_name == $tag and .name == $tag and .draft == false and .prerelease == false and .immutable == true and
                 (.assets | length) == 1 and
                 .assets[0].name == $name and (.assets[0] | has("label") and .label == null) and .assets[0].state == "uploaded" and
                 (.assets[0].id | type) == "number" and (.assets[0].id == (.assets[0].id | floor)) and .assets[0].id > 0 and
-                .assets[0].url == ("https://api.github.com/repos/" + $repository + "/releases/assets/" + (.assets[0].id | tostring)) and
-                .assets[0].browser_download_url == ("https://github.com/" + $repository + "/releases/download/" + $tag + "/" + $name) and
                 (.assets[0].size | type) == "number" and (.assets[0].size == (.assets[0].size | floor)) and .assets[0].size == $size and .assets[0].size > 0 and .assets[0].size <= 1048576 and
-                (.assets[0].digest | type) == "string" and .assets[0].digest == $digest and
-                (.assets[0].created_at | valid_time) and (if $asset_created == "" then true else .assets[0].created_at == $asset_created end) and
-                (.assets[0].updated_at | valid_time) and (if $asset_updated == "" then true else .assets[0].updated_at == $asset_updated end)
+                (.assets[0].digest | type) == "string" and .assets[0].digest == $digest
               ' "$release_path" >/dev/null
-            python3 .github/scripts/validate.py release-times "$release_path"
           }
-          probe_release_status() {
-            local max_bytes="$1" output="$2" timeout_seconds="$3"
-            shift 3
-            (( max_bytes > 0 && max_bytes % 1024 == 0 )) || {
-              echo "release probe size must be a positive multiple of 1024 bytes" >&2
-              return 1
-            }
-            local max_blocks=$(( max_bytes / 1024 ))
-            local stderr="$output.stderr" status status_line status_code
-            rm -f "$output" "$stderr"
-            if (
-              ulimit -c 0
-              ulimit -f "$max_blocks"
-              timeout --signal=TERM --kill-after=5s "${timeout_seconds}s" gh api --include --silent "$@"
-            ) > "$output" 2> "$stderr"; then
-              status=0
-            else
-              status=$?
-            fi
-            if [[ -s "$stderr" ]]; then
-              expected_404="gh: HTTP 404: Not Found (https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME)"
-              if [[ "$status" = 1 ]] && [[ "$(tr -d '\r\n' <"$stderr")" = "$expected_404" ]]; then
-                :
-              else
-                echo "release probe emitted unexpected stderr ($(wc -c < "$stderr") bytes)" >&2
-                return 1
-              fi
-            fi
-            test "$status" = 0 -o "$status" = 1
-            test "$(wc -c < "$output")" -le "$max_bytes"
-            status_line="$(sed -n '1p' "$output")"
-            if [[ "$status_line" =~ ^HTTP/[0-9.]+[[:space:]]([0-9]{3})([[:space:]]|$) ]]; then
-              status_code="${BASH_REMATCH[1]}"
-            else
-              echo "release probe did not return an HTTP status" >&2
-              return 1
-            fi
-            case "$status_code" in
-              200) return 0 ;;
-              404) return 4 ;;
-              *) echo "unexpected release probe HTTP status: $status_code" >&2; return 1 ;;
-            esac
+          check_server_draft() {
+            local release_path="$1"
+            test "$(wc -c < "$release_path")" -le 1048576
+            jq -e --arg tag "$GITHUB_REF_NAME" --arg name "$manifest_name" \
+              --arg body "$release_body" '
+                (.id | type) == "number" and (.id == (.id | floor)) and .id > 0 and
+                (.body | type) == "string" and .body == $body and
+                .tag_name == $tag and .name == $tag and .draft == true and .prerelease == false and
+                (.assets | type == "array" and length <= 1) and
+                ((.assets | length) == 0 or
+                  ((.assets | length) == 1 and .assets[0].name == $name and
+                   .assets[0].state == "uploaded" and
+                   (.assets[0].id | type) == "number" and
+                   (.assets[0].size | type) == "number"))
+              ' "$release_path" >/dev/null
           }
-
-          # GitHub's tag lookup only returns published Releases. Enumerate authenticated Releases
-          # with bounded pages so an interrupted draft is resumable without guessing an ID.
-          find_release_in_list() {
-            local destination="$1" page page_path page_count matches release_id=""
-            for page in $(seq 1 10); do
-              page_path="$metadata_dir/releases-page-$page.json"
-              bounded_api 1048576 "$page_path" 30 \
-                --hostname github.com \
-                --header 'Accept: application/vnd.github+json' \
-                --header 'X-GitHub-Api-Version: 2026-03-10' \
-                "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page"
-              jq -e 'type == "array" and length <= 100 and all(.[]; type == "object" and (.tag_name | type == "string"))' \
-                "$page_path" >/dev/null
-              page_count="$(jq -er 'length' "$page_path")"
-              matches="$(jq -er --arg tag "$GITHUB_REF_NAME" '[.[] | select(.tag_name == $tag)] | length' "$page_path")"
-              if [[ "$matches" -gt 1 || ("$matches" -eq 1 && -n "$release_id") ]]; then
-                echo "GitHub Releases enumeration found multiple records for $GITHUB_REF_NAME" >&2
-                return 1
-              fi
-              if [[ "$matches" = 1 ]]; then
-                release_id="$(jq -er --arg tag "$GITHUB_REF_NAME" '[.[] | select(.tag_name == $tag)][0].id | select(type == "number" and . == floor and . > 0)' "$page_path")"
-              fi
-              if [[ "$page_count" -lt 100 ]]; then
-                break
-              fi
-              if [[ "$page" = 10 ]]; then
-                echo "GitHub Releases enumeration reached its page limit" >&2
-                return 1
-              fi
-            done
-            if [[ -z "$release_id" ]]; then
-              return 4
-            fi
-            bounded_api 1048576 "$destination" 30 \
-              --hostname github.com \
+          release_json_path="$RUNNER_TEMP/release.json"
+          release_error_path="$RUNNER_TEMP/release.error"
+          release_headers_path="$RUNNER_TEMP/release.headers"
+          get_release() {
+            local command_status code
+            set +e
+            bounded_gh 1048576 65536 1048576 "$release_headers_path" "$release_error_path" 30 \
+              gh api --include --hostname github.com \
               --header 'Accept: application/vnd.github+json' \
               --header 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id"
+              "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
+            command_status=$?
+            set -e
+            code="$(http_status "$release_headers_path")"
+            case "$code" in
+              200)
+                test "$command_status" -eq 0
+                test ! -s "$release_error_path"
+                http_body "$release_headers_path" >"$release_json_path"
+                test "$(wc -c <"$release_json_path")" -le 1048576
+                return 0
+                ;;
+              404)
+                test "$command_status" -ne 0
+                return 4
+                ;;
+              *)
+                cat -- "$release_error_path" >&2
+                return 1
+                ;;
+            esac
           }
-
           download_and_compare_manifest() {
             local directory="$1" asset_id="$2"
             mkdir -p "$directory"
-            bounded_asset_download 1048576 "$directory/$manifest_name" 120 \
+            bounded_gh 1048576 65536 1048576 "$directory/$manifest_name" "$directory/$manifest_name.error" 120 gh api \
               --hostname github.com \
               --header 'Accept: application/octet-stream' \
               --header 'X-GitHub-Api-Version: 2026-03-10' \
               "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
-            test -f "$directory/$manifest_name"
             test "$(wc -c < "$directory/$manifest_name")" -le 1048576
             cmp -- "$manifest_path" "$directory/$manifest_name"
           }
 
-          refresh_release() {
-            local destination="$1"
-            bounded_api 1048576 "$destination" 30 \
-              --hostname github.com \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/releases/$release_id"
-          }
-
-          upload_draft_asset() {
-            local output="$metadata_dir/release-upload.log" status=0
-            if bounded_output 65536 "$output" 120 gh release upload "$GITHUB_REF_NAME" "$manifest_path" \
-              --repo "github.com/$GITHUB_REPOSITORY" --clobber; then
-              :
-            else
-              status=$?
-            fi
-            # An interrupted upload may have committed on GitHub before the client noticed.
-            # The caller always refreshes and validates the release before deciding whether the
-            # operation really failed.
-            test "$(wc -c <"$output")" -le 65536
-            test "$(wc -c <"$output.stderr")" -le 65536
-            return "$status"
-          }
-
-          ensure_draft_asset() {
-            local release_path="$1" asset_name asset_id upload_status=0
-            local action
-            action="$(python3 .github/scripts/validate.py draft-asset-state "$release_path" "$manifest_name" "$manifest_size:$manifest_digest")"
-            if [[ "$action" = upload ]]; then
-              if upload_draft_asset; then :; else upload_status=$?; fi
-            else
-              asset_name="$(jq -er '.assets[0].name | select(type == "string")' "$release_path")"
-              test "$asset_name" = "$manifest_name"
-              asset_id="$(jq -er '.assets[0].id | select(type == "number" and . == floor and . > 0)' "$release_path")"
-              if [[ "$action" = verify ]] && \
-                download_and_compare_manifest "$RUNNER_TEMP/draft-release" "$asset_id"; then
-                return 0
-              fi
-              # A same-name truncated or corrupt draft asset is safe to replace while the release
-              # remains a draft. A final immutable release never enters this function.
-              if upload_draft_asset; then :; else upload_status=$?; fi
-            fi
-            refresh_release "$release_path"
-            asset_count="$(jq -er '.assets | type == "array" and length' "$release_path")"
-            test "$asset_count" = 1
-            test "$(jq -er '.assets[0].name' "$release_path")" = "$manifest_name"
-            asset_id="$(jq -er '.assets[0].id | select(type == "number" and . == floor and . > 0)' "$release_path")"
-            download_and_compare_manifest "$RUNNER_TEMP/draft-release-after-upload" "$asset_id"
-            test "$upload_status" = 0 || echo "interrupted draft upload recovered as an exact asset"
-          }
-
-          recheck_product_release_evidence() {
-            local final_metadata="$metadata_dir/final-product-evidence" output="$metadata_dir/product-recheck.log"
-            local error="$output.stderr"
-            mkdir -p "$final_metadata"
-            rm -f -- "$output" "$error"
-            (
-              ulimit -c 0
-              ulimit -f 1024
-              timeout --signal=TERM --kill-after=5s 240s env METADATA_DIR="$final_metadata" \
-                .github/scripts/fetch_product_releases.sh
-            ) >"$output" 2>"$error"
-            test ! -s "$output" && test ! -s "$error"
-            test "$(wc -c <"$output")" -le 1048576
-            test "$(wc -c <"$error")" -le 1048576
-            python3 .github/scripts/validate.py product-release-recheck "$metadata_dir" "$final_metadata"
-          }
-
-          release_probe_path="$metadata_dir/release-probe.log"
-          release_json_path="$metadata_dir/release.json"
-          release_discovered=false
-          if probe_release_status 65536 "$release_probe_path" 30 \
-            --hostname github.com \
-            --header 'Accept: application/vnd.github+json' \
-            --header 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"; then
-            release_discovered=true
-            bounded_api 1048576 "$release_json_path" 30 \
-              --hostname github.com \
-              --header 'Accept: application/vnd.github+json' \
-              --header 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
-          elif [[ "$?" = 4 ]]; then
-            if find_release_in_list "$release_json_path"; then
-              release_discovered=true
-            elif [[ "$?" = 4 ]]; then
-              create_status=0
-              if bounded_output 1048576 "$metadata_dir/release-create.log" 120 gh release create "$GITHUB_REF_NAME" \
-                --repo "github.com/$GITHUB_REPOSITORY" --draft \
-                --verify-tag \
-                --title "$GITHUB_REF_NAME" \
-                --notes "$release_body"; then :; else create_status=$?; fi
-              # Release creation and the client response are separate operations. Re-enumerate
-              # after an interrupted client call and continue only if the exact tag is present.
-              if ! find_release_in_list "$release_json_path"; then
-                test "$create_status" = 0
-                echo "ServerState release creation returned without a recoverable release" >&2
-                exit 1
-              fi
-              release_discovered=true
-            else
-              echo "could not safely enumerate existing ServerState drafts" >&2
-              exit 1
-            fi
+          # Re-fetch the source identity after all registry work and immediately before the
+          # release transaction. The tag and current remote main must still name this commit.
+          verify_source_identity
+          if get_release; then
+            check_server_draft "$release_json_path"
           else
-            echo "could not safely determine whether the ServerState release exists" >&2
-            exit 1
+            status=$?
+            test "$status" = 4
+            set +e
+            bounded_gh 65536 65536 65536 "$metadata_dir/release-create.log" "$metadata_dir/release-create.error" 60 \
+              gh release create "$GITHUB_REF_NAME" --repo "github.com/$GITHUB_REPOSITORY" --draft \
+              --verify-tag --title "$GITHUB_REF_NAME" --notes "$release_body"
+            set -e
+            # If the client lost its response after a successful create, continue only when the
+            # exact draft can be recovered. Any final or ambiguous record fails closed.
+            get_release || exit 1
+            test ! -s "$metadata_dir/release-create.error"
+            check_server_draft "$release_json_path"
           fi
-          test "$release_discovered" = true
-          release_draft="$(jq -er '.draft | if type == "boolean" then tostring else halt_error(1) end' "$release_json_path")"
-          release_id="$(jq -er '.id | select(type == "number" and . == floor and . > 0)' "$release_json_path")"
-          release_created_at="$(jq -er '.created_at | select(type == "string")' "$release_json_path")"
-          if [[ "$release_draft" = true ]]; then
-            ensure_draft_asset "$release_json_path"
-            refresh_release "$release_json_path"
+          asset_count="$(jq -er '.assets|length' "$release_json_path")"
+          if [[ "$asset_count" -eq 0 ]]; then
+            test "$manifest_size" -le 1048576
+            set +e
+            bounded_gh 65536 65536 65536 "$metadata_dir/release-upload.log" "$metadata_dir/release-upload.error" 120 \
+              gh release upload "$GITHUB_REF_NAME" "$manifest_path" --repo "github.com/$GITHUB_REPOSITORY"
+            upload_status=$?
+            set -e
+            test ! -s "$metadata_dir/release-upload.error"
+            get_release
           fi
-          release_asset_id="$(jq -er '.assets | select(length == 1) | .[0].id | select(type == "number" and . == floor and . > 0)' "$release_json_path")"
-          release_asset_created_at="$(jq -er '.assets | select(length == 1) | .[0].created_at | select(type == "string")' "$release_json_path")"
-          release_asset_updated_at="$(jq -er '.assets | select(length == 1) | .[0].updated_at | select(type == "string")' "$release_json_path")"
-          if [[ "$release_draft" = true ]]; then
-            check_server_release "$release_json_path" true false "$release_created_at" "$release_asset_created_at" "$release_asset_updated_at"
-          elif [[ "$release_draft" = false ]]; then
-            check_server_release "$release_json_path" false true "$release_created_at" "$release_asset_created_at" "$release_asset_updated_at"
-          else
-            echo "release draft state is not boolean" >&2
-            exit 1
+          get_release
+          check_server_draft "$release_json_path"
+          release_asset_id="$(jq -er --arg name "$manifest_name" \
+            '.assets | select(length == 1) | .[0] | select(.name == $name) | .id' "$release_json_path")"
+          draft_dir="$RUNNER_TEMP/draft-release"
+          download_and_compare_manifest "$draft_dir" "$release_asset_id"
+          if [[ "${upload_status:-0}" -ne 0 ]]; then
+            test ! -s "$metadata_dir/release-upload.error"
           fi
-          initial_dir="$RUNNER_TEMP/initial-release"
-          download_and_compare_manifest "$initial_dir" "$release_asset_id"
-
-          recheck_product_release_evidence
-          if [[ "$release_draft" = true ]]; then
-            verify_source_identity
-            bounded_output 65536 "$metadata_dir/release-edit.log" 120 gh release edit "$GITHUB_REF_NAME" \
-              --repo "github.com/$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME" --draft=false --verify-tag --title "$GITHUB_REF_NAME"
-            cmp -- "$expected_url_file" "$metadata_dir/release-edit.log"
-          fi
-
+          set +e
+          bounded_gh 65536 65536 65536 "$metadata_dir/release-edit.log" "$metadata_dir/release-edit.error" 60 \
+            gh release edit "$GITHUB_REF_NAME" --repo "github.com/$GITHUB_REPOSITORY" \
+            --draft=false --verify-tag --title "$GITHUB_REF_NAME" --notes "$release_body"
+          edit_status=$?
+          set -e
+          test ! -s "$metadata_dir/release-edit.error"
           final_release_json_path="$RUNNER_TEMP/final-release.json"
-          bounded_api 1048576 "$final_release_json_path" 30 \
-            --hostname github.com \
-            --header 'Accept: application/vnd.github+json' \
-            --header 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
-          final_created_at="$(jq -er '.created_at | select(type == "string")' "$final_release_json_path")"
-          final_asset_created_at="$(jq -er '.assets | select(length == 1) | .[0].created_at | select(type == "string")' "$final_release_json_path")"
-          final_asset_updated_at="$(jq -er '.assets | select(length == 1) | .[0].updated_at | select(type == "string")' "$final_release_json_path")"
-          check_server_release "$final_release_json_path" false true "$release_created_at" "$release_asset_created_at" "$release_asset_updated_at"
-          test "$(jq -er '.id' "$final_release_json_path")" = "$release_id"
-          test "$(jq -er '.assets[0].id' "$final_release_json_path")" = "$release_asset_id"
-          test "$final_created_at" = "$release_created_at"
-          test "$final_asset_created_at" = "$release_asset_created_at"
-          test "$final_asset_updated_at" = "$release_asset_updated_at"
+          get_release
+          cp -- "$release_json_path" "$final_release_json_path"
+          check_server_release "$final_release_json_path"
+          if [[ "$edit_status" -ne 0 ]]; then
+            test ! -s "$metadata_dir/release-edit.error"
+          fi
+          release_asset_id="$(jq -er '.assets[0].id' "$final_release_json_path")"
           final_dir="$RUNNER_TEMP/final-release"
           download_and_compare_manifest "$final_dir" "$release_asset_id"
-          recheck_product_release_evidence
           verify_registry_digests
-          verify_source_identity

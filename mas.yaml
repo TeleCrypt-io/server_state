@@ -1,10 +1,14 @@
 # Matrix Authentication Service — committed base config. Contains NO secrets.
-# Secret-bearing top-level keys (secrets, database, matrix) live WHOLLY in the
-# gitignored secrets file, merged at runtime as the final `--config` layer.
+# Secret-bearing top-level keys (secrets, database, matrix) and the two static
+# client credentials live in the gitignored JSON file, merged after this base and before the final
+# Harness identity layer. The identity layer is last so this private overlay cannot replace public
+# identity.
 #
 # The Harness writes http.public_base, http.issuer, and
 # experimental.plan_management_iframe_uri to the runtime identity layer before Compose validation.
-# The private overlay contains secrets and application-specific settings only.
+# The private overlay contains secrets plus the environment-bound database and client identities.
+# MAS's client list is kept in one layer because Figment concatenates arrays during admerge; its
+# nonsecret auth method and redirect choices therefore stay beside those client secrets.
 
 http:
   listeners:
@@ -17,30 +21,39 @@ http:
         - name: graphql
         - name: assets
       binds:
-        - address: '[::]:8080'
+        # Bind only the three network endpoint addresses that need MAS's web resources. The
+        # aliases are network-scoped Compose DNS names; this avoids exposing the web listener on
+        # the private admin network or any future attachment without assigning fixed subnets.
+        - host: mas-edge
+          port: 8080
+        - host: mas-synapse
+          port: 8080
+        - host: mas-plan
+          port: 8080
       proxy_protocol: false
 
     - name: internal
       resources:
-        - name: health
-        - name: adminapi       # REST admin API; reachable only on the internal listener
+        - name: adminapi       # REST admin API; reachable only on mas_admin_net
       binds:
-        - host: 0.0.0.0
+        # Compose gives MAS a network-scoped self-alias only on mas_admin_net, shared with Janitor.
+        - host: mas-admin
           port: 8081
       proxy_protocol: false
 
-  # Containers and the in-VM proxy communicate over private Docker networks.
-  trusted_proxies:
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-    - 192.168.0.0/16
-    - 127.0.0.1/8
-    - ::1/128
-    - fd00::/8
+  # Harness supplies public_base and issuer in the final identity layer; forwarded scheme/host do
+  # not require MAS to trust client-selected X-Forwarded-For. An explicit empty list is required:
+  # omitting this key restores MAS's private-range defaults. MAS therefore records the Caddy peer
+  # for IP-based rate limiting/logging instead of accepting a spoofable header from any app peer.
+  trusted_proxies: []
 
-# secrets:         -> in mas.secrets.yaml (encryption + signing keys)
-# database:        -> in mas.secrets.yaml (host postgres_mas + password)
-# matrix:          -> in mas.secrets.yaml (kind synapse, endpoint http://synapse:8008, shared secret)
+# secrets:         -> in mas.secrets.json (encryption + signing keys)
+# database:        -> in mas.secrets.json (the owner-managed PostgreSQL endpoint + password)
+# matrix homeserver/secret -> in mas.secrets.json; kind and endpoint are committed below
+
+matrix:
+  kind: synapse
+  endpoint: http://synapse:8008
 
 # Local passwords are accepted only by MAS's hosted OAuth human pages (for
 # registration, reauthentication, and recovery); Caddy denies Matrix
@@ -48,7 +61,8 @@ http:
 passwords:
   enabled: true
 
-# redpill has its own per-source and global limiter; MAS sees it as one upstream client.
+# The Agents endpoint has one global limiter; all requests arrive through Caddy, whose peer address
+# is the source used by MAS because forwarded client-IP headers are not trusted.
 rate_limiting:
   registration:
     burst: 100
@@ -59,17 +73,30 @@ account:
   registration_token_required: false
   password_registration_email_required: false  # email optional — see header comment
   password_change_allowed: true
-  password_recovery_enabled: true              # requires SMTP in mas.secrets.yaml
-  account_deactivation_allowed: false
+  password_recovery_enabled: false             # no MAS email transport is enabled
+  account_deactivation_allowed: true           # users may deactivate their own OAuth account
   login_with_email_allowed: false
   email_change_allowed: true
   displayname_change_allowed: true
 
 # experimental.plan_management_iframe_uri is supplied by the runtime identity layer.
 
-# email:   -> in mas.secrets.yaml (transport + SMTP creds)
-# clients: -> in mas.secrets.yaml (ULID client_ids + client_secrets; ULIDs must match policy below)
-# policy:  -> in mas.secrets.yaml (policy.data.admin_clients references janitor's admin client ULID)
+# Email is deliberately non-delivering until an approved transport and destination exist.
+email:
+  transport: blackhole
+
+# Keep policy behavior in the committed base. The environment-bound Janitor admin client is added
+# by Harness's final runtime identity layer, not by the private secret overlay.
+policy:
+  wasm_module: /usr/local/share/mas-cli/policy.wasm
+  client_registration_entrypoint: client_registration/violation
+  register_entrypoint: register/violation
+  authorization_grant_entrypoint: authorization_grant/violation
+  compat_login_entrypoint: compat_login/violation
+  password_entrypoint: password/violation
+  email_entrypoint: email/violation
+
+# clients: -> in mas.secrets.json (two exact client records; see Harness validation)
 
 branding:
   service_name: 'TeleCrypt.io'

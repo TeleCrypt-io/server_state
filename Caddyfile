@@ -4,12 +4,18 @@
 # site prefixes disable Caddy's automatic HTTPS so it serves on the HTTP port only.
 #
 # Requirements:
-#   - This Caddy must join the `telecrypt_net` Docker network to resolve `synapse` / `mas`.
+#   - Compose places Caddy on one dedicated internal edge network per routed upstream; it has no
+#     network path to Janitor or MAS's private admin listener.
 #   - It listens on unprivileged container port 8080; Compose maps the proxy-facing host port to it.
 #   - The upstream proxy MUST send `X-Forwarded-Proto: https` (so MAS/Synapse build https URLs and
 #     set Secure cookies).
-#   - `TRUSTED_PROXY` must be the exact CIDR of the TLS terminator. Redpill's per-source limiter
-#     depends on Caddy accepting forwarded client addresses only from that proxy.
+#   - `TRUSTED_PROXY` must be exactly one TLS-terminator host address (/32 or /128). Caddy uses it
+#     to trust only that proxy's forwarded protocol and client context; application identity and
+#     rate limiting do not depend on a forwarded client-IP header.
+#   - For rootless Docker, this peer gate is activation-valid only with RootlessKit >= 3.0's
+#     built-in TCP source-address propagation and userland-proxy disabled. Harness must verify those
+#     exact host conditions and prove the observed peer/X-Forwarded behavior live; other publish paths
+#     do not satisfy this boundary.
 
 # TLS / auto-HTTPS is FULLY disabled: HAProxy terminates TLS and forwards plain HTTP here.
 # `auto_https off` stops Caddy from provisioning ANY certificate, opening :443, or doing ACME —
@@ -19,11 +25,13 @@
 
 	servers {
 		trusted_proxies static {$TRUSTED_PROXY}
+		trusted_proxies_strict
 	}
 }
 
-# Safe response defaults. Do not use X-Frame-Options here: MAS embeds the Steward page in its own
-# account UI. TLS/HSTS policy belongs to the TLS-terminating host, not this HTTP-only proxy.
+# Safe response defaults. MAS embeds the Plan page from the same backend origin; Plan's own
+# same-origin framing policy remains authoritative. Do not add a wildcard or third-party frame
+# permission here. TLS/HSTS policy belongs to the TLS-terminating host, not this HTTP-only proxy.
 (security_headers) {
 	header {
 		-Server
@@ -34,12 +42,34 @@
 }
 
 # Keep paths and response details for diagnosis without retaining OAuth or other secret query data.
+# Credential headers and response cookies are excluded as well.
 (access_log) {
 	log {
 		format filter {
 			request>uri regexp "[?].*" "?[REDACTED]"
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			request>headers>Proxy-Authorization delete
+			resp_headers>Set-Cookie delete
 		}
 	}
+}
+
+# No upstream may trust a client-selected identity header. Remove the obsolete client-IP header
+# from every forwarded request; no current service consumes it for identity or rate limiting.
+(strip_untrusted_client_ip) {
+	header_up -X-Telecrypt-Client-IP
+}
+
+# Caddy must be reachable only from the configured TLS terminator. `remote_ip` is the immediate
+# transport peer and is deliberately independent of forwarded-client-IP trust. The Docker/rootless
+# host publish path must preserve the configured proxy peer; the external terminator cannot do that
+# after the request crosses the host boundary. See the RootlessKit/userland-proxy prerequisite above.
+(ingress_peer_gate) {
+	@untrusted_ingress_peer {
+		not remote_ip {$TRUSTED_PROXY}
+	}
+	abort @untrusted_ingress_peer
 }
 
 # ── APEX (SERVER_NAME): well-known discovery + 301 redirect to the public site ──────────────────
@@ -47,6 +77,7 @@
 # proper CORS/Content-Type headers (GitHub Pages at www can't set those). Everything else 301s to
 # the TeleCrypt landing site.
 http://{$SERVER_NAME}:8080 {
+	import ingress_peer_gate
 	import access_log
 	import security_headers
 
@@ -55,13 +86,16 @@ http://{$SERVER_NAME}:8080 {
 	header /.well-known/matrix/* Access-Control-Allow-Origin "*"
 	header /.well-known/matrix/* Cache-Control "max-age=3600"
 
-	@well_known_client path /.well-known/matrix/client
+	@well_known_client {
+		method GET
+		path /.well-known/matrix/client
+	}
 	handle @well_known_client {
 		respond `{
-			"m.homeserver": {"base_url": "https://{$BACKEND_HOST}"},
-			"org.matrix.msc2965.authentication": {
-				"issuer": "https://{$BACKEND_HOST}/auth/",
-				"account": "https://{$BACKEND_HOST}/auth/account"
+				"m.homeserver": {"base_url": "https://backend.{$SERVER_NAME}"},
+				"org.matrix.msc2965.authentication": {
+					"issuer": "https://backend.{$SERVER_NAME}/auth/",
+					"account": "https://backend.{$SERVER_NAME}/auth/account"
 			}
 		}`
 	}
@@ -69,19 +103,21 @@ http://{$SERVER_NAME}:8080 {
 	# No /.well-known/matrix/server — federation is disabled.
 
 	# Everything else → landing site on GitHub Pages.
-	handle {
-		redir https://www.telecrypt.io{uri} 301
+	# Drop the query string so callback codes or other secrets cannot be carried to the landing site.
+		handle {
+			redir https://www.telecrypt.io{http.request.uri.path} 301
 	}
 }
 
-# ── BACKEND (BACKEND_HOST): Matrix stack (Synapse + MAS + Controlplane + Cashier) ──────────────
-http://{$BACKEND_HOST}:8080 {
+# ── BACKEND (derived from SERVER_NAME): Synapse + MAS + Registration + Plan + Cashier ──────────
+http://backend.{$SERVER_NAME}:8080 {
+	import ingress_peer_gate
 	import access_log
 	import security_headers
 
-	# Administrative APIs are available only over telecrypt_net. The control-plane services use
-	# their container addresses directly; browsers and Internet clients must not reach these paths.
-	@mas_admin path /auth/api/admin/v1 /auth/api/admin/v1/*
+	# Administrative APIs are available only over private application networks. Browsers and Internet
+	# clients must not reach these paths.
+	@mas_admin path /auth/api/admin /auth/api/admin/*
 	handle @mas_admin {
 		respond "Not Found" 404
 	}
@@ -97,15 +133,29 @@ http://{$BACKEND_HOST}:8080 {
 
 	# Matrix password login must never reach MAS or Synapse.
 	# MAS-hosted /auth/login remains available for OAuth browser/device approval.
-	@matrix_compat_login path_regexp ^/_matrix/client/(.*)/login/?$
+	@matrix_compat_login path_regexp ^/_matrix/client/[^/]+/login/?$
 	handle @matrix_compat_login {
 		respond "Not Found" 404
 	}
 
-	# Retain only MAS logout/refresh routes required by Matrix clients.
-	@mas_compat path_regexp ^/_matrix/client/(.*)/(logout|refresh)/?$
+	# Retain only POST MAS logout/refresh routes required by Matrix clients. Reject every other
+	# method before the generic Synapse matcher below can see the path.
+	@mas_compat_other_method {
+		path_regexp ^/_matrix/client/[^/]+/(logout|refresh)/?$
+		not method POST
+	}
+	handle @mas_compat_other_method {
+		header Allow "POST"
+		respond "Method Not Allowed" 405
+	}
+	@mas_compat {
+		method POST
+		path_regexp ^/_matrix/client/[^/]+/(logout|refresh)/?$
+	}
 	handle @mas_compat {
-		reverse_proxy mas:8080
+		reverse_proxy mas:8080 {
+			import strip_untrusted_client_ip
+		}
 	}
 
 	# … and everything under /auth (its UI, OAuth2, discovery, account).
@@ -113,48 +163,59 @@ http://{$BACKEND_HOST}:8080 {
 	@mas path /auth /auth/*
 	handle @mas {
 		uri strip_prefix /auth
-		reverse_proxy mas:8080
+		reverse_proxy mas:8080 {
+			import strip_untrusted_client_ip
+		}
 	}
-
-	# Everything else Matrix → Synapse. /_synapse is deliberately excluded: see admin block above.
-	@synapse path_regexp ^(/_matrix|/health)
+	# Enabled Matrix client and media resources → Synapse. /_synapse and other Matrix resources are
+	# deliberately excluded: see the admin block above and the listener resources in synapse.yaml.
+	@synapse path_regexp ^/_matrix/(client|media)(/|$)
 	handle @synapse {
-		reverse_proxy synapse:8008
+		reverse_proxy synapse:8008 {
+			import strip_untrusted_client_ip
+		}
 	}
 
 	# Agent on-ramp accepts POST only. Return 405 at the edge rather than proxying other methods.
-	@redpill_post {
+	@agents_post {
 		method POST
-		path /redpill
+		path /agents
 	}
-	handle @redpill_post {
-		reverse_proxy controlplane:9009
+	handle @agents_post {
+		reverse_proxy registration:9009 {
+			import strip_untrusted_client_ip
+		}
 	}
-	@redpill_other_method path /redpill
-	handle @redpill_other_method {
+	@agents_other_method {
+		path /agents
+		not method POST
+	}
+	handle @agents_other_method {
 		header Allow "POST"
 		respond "Method Not Allowed" 405
 	}
 
-	# Steward owns every browser route. Canonical Plan actions use /api/plan. Dodo card data is entered only
+	# Plan owns every browser route. Canonical Plan actions use /api/plan. Dodo card data is entered only
 	# on the provider-hosted checkout.
 	@plan path /plan /plan/* /api/plan /api/plan/*
 	handle @plan {
-		reverse_proxy steward:9012
+		reverse_proxy plan:9012 {
+			import strip_untrusted_client_ip
+		}
 	}
-	# Cashier has no browser surface. DODO_WEBHOOK_PATH is a mode-600 ingress secret; Caddy rewrites
-	# that external capability URL to Cashier's canonical internal handler.
-	# Do not record this capability URL in access logs, including rejected methods. The path is
-	# deliberately generated outside this repository and is present only through env_file.
-	@dodo_webhook_path path {$DODO_WEBHOOK_PATH}
+	# Cashier has no browser surface. The provider's fixed signed webhook endpoint is the only public
+	# Cashier route; do not record it in access logs, including rejected methods.
+	@dodo_webhook_path path /webhooks/dodo
 	log_skip @dodo_webhook_path
 	@dodo_webhook {
 		method POST
-		path {$DODO_WEBHOOK_PATH}
+		path /webhooks/dodo
 	}
 	handle @dodo_webhook {
-		uri replace {$DODO_WEBHOOK_PATH} /webhooks/dodo
-		reverse_proxy cashier:9011
+		header Cache-Control "no-store"
+		reverse_proxy cashier:9011 {
+			import strip_untrusted_client_ip
+		}
 	}
 
 	# Everything else is outside the published application surface.

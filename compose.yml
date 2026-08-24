@@ -4,8 +4,15 @@
 #   - Rootless Docker. Apps drop to uid/gid 991; no privileged host ports.
 #   - TLS is terminated by an UPSTREAM reverse proxy; the shared Caddy speaks plain HTTP.
 #   - Persistent state and real secrets live outside this repository under TELECRYPT_DATA_DIR.
-#   - Synapse and MAS merge committed base config, Harness runtime identity, and private secret
-#     config at runtime.
+#   - Synapse and MAS merge committed base config, private JSON config, and Harness runtime
+#     identity last, so private overlays cannot replace public identity.
+#   - Caddy reaches each public upstream over its own edge network; private peers use separate
+#     purpose-specific networks and egress is isolated per service where required. Compose's
+#     `gw_priority: 1` is used only on the five non-internal egress attachments below and requires
+#     Docker Engine 28+ with Compose 2.33.1+.
+#   - MAS's web listener is bound only on network-scoped aliases for its Caddy, Synapse, and Plan
+#     peers; its admin listener is bound only on the `mas-admin` alias on mas_admin_net, shared by
+#     MAS and Janitor.
 #   - Media is stored in external S3; PostgreSQL is external to this Compose project.
 
 services:
@@ -14,10 +21,14 @@ services:
   caddy:
     # Exact tested release tag; no digest pin by operator preference. Keep `-alpine` —
     # `caddy:2`/`latest` is the larger Debian image. Upgrade deliberately after validation.
-    image: docker.io/caddy:2.11.4-alpine
-    container_name: tc_caddy
+    image: ${CADDY_IMAGE:?set CADDY_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net ]
+    networks:
+      edge_synapse_net:
+      edge_mas_net:
+      edge_registration_net:
+      edge_plan_net:
+      edge_cashier_net:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -31,14 +42,14 @@ services:
     ports:
       # Set INGRESS_BIND_ADDRESS in the server-only .env to the dedicated proxy-facing VM address.
       # The loopback default fails closed for a fresh checkout.
-      - "${INGRESS_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - target: 8080
+        published: 8080
+        host_ip: ${INGRESS_BIND_ADDRESS:?set INGRESS_BIND_ADDRESS}
+        protocol: tcp
+        mode: ingress
     environment:
-      - TRUSTED_PROXY=${TRUSTED_PROXY:-127.0.0.1/32}
+      - TRUSTED_PROXY=${TRUSTED_PROXY:?set TRUSTED_PROXY}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - BACKEND_HOST=${BACKEND_HOST:?set BACKEND_HOST}
-    # Contains only DODO_WEBHOOK_PATH, not a Dodo API key or webhook signature secret.
-    env_file:
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/ingress.secrets.env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     depends_on:
@@ -48,30 +59,45 @@ services:
 
   # ── Matrix homeserver (official Synapse + exact external policy/S3 components) ───────────────
   synapse:
-    # `1.159-tc2` is this image's immutable operational tag. Its OCI provenance records Synapse
-    # 1.159.0, Matrix.org S3 provider 1.7.0, and Controlplane policy wheel 0.4.0; that provenance
-    # is independent of the Controlplane application release selected below. Do not replace it with
-    # a bind mount or a startup package install.
-    image: ghcr.io/telecrypt-io/telecrypt-synapse:1.159-tc2
-    container_name: tc_synapse
+    # This image's reviewed operational tag carries Synapse, the Matrix.org S3 provider, and the
+    # Controlplane policy wheel. Do not replace it with a bind mount or a startup package install.
+    image: ${SYNAPSE_IMAGE:?set SYNAPSE_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net ]
+    networks:
+      edge_synapse_net:
+      synapse_mas_net:
+      synapse_egress_net:
+        gw_priority: 1
+      cashier_synapse_net:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    read_only: true
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     user: "991:991"
-    # Bypass the image's start.py so we can merge public base, runtime identity, and private config.
+    tmpfs:
+      - /tmp:uid=991,gid=991,mode=1777
+    # Bypass the image's start.py so we can merge public base, private config, and SERVER_NAME-derived
+    # runtime identity last; the final layer owns the public identity fields.
     entrypoint: ["python", "-m", "synapse.app.homeserver"]
-    command: ["-c", "/homeserver.yaml", "-c", "/runtime-identity.yaml", "-c", "/secrets.yaml"]
+    command: ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]
     volumes:
       - ./synapse.yaml:/homeserver.yaml:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse.identity.yaml:/runtime-identity.yaml:ro
       - ./synapse.log.config:/log.config:ro
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse.secrets.yaml:/secrets.yaml:ro
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse_signing.key:/signing.key:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/synapse/media_store:/data:rw
+    secrets:
+      - source: synapse_secrets_json
+        target: /secrets.json
+        uid: "991"
+        gid: "991"
+        mode: 0400
+      - source: synapse_signing_key
+        target: /signing.key
+        uid: "991"
+        gid: "991"
+        mode: 0400
     healthcheck:
       test: ["CMD", "curl", "-fSs", "http://localhost:8008/health"]
       interval: 15s
@@ -84,10 +110,8 @@ services:
 
   # ── Matrix Authentication Service (MSC3861). Publicly served under /auth by Caddy. ───────────
   mas:
-    image: ghcr.io/element-hq/matrix-authentication-service:1.23.0
-    container_name: tc_mas
+    image: ${MAS_IMAGE:?set MAS_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net ]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     # MAS stores application state in external PostgreSQL; the official image has no writable
@@ -97,21 +121,55 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     user: "991:991"
-    command: ["server", "--config=/config.yaml", "--config=/runtime-identity.yaml", "--config=/secrets.yaml"]
+    # MAS's repeated --config files merge in order; keep the Harness identity layer last so the
+    # private secret overlay cannot replace public identity.
+    command: ["server", "--config=/config.yaml", "--config=/secrets.json", "--config=/runtime-identity.yaml"]
+    healthcheck:
+      # The distroless image has no shell or HTTP client. This validates every config layer;
+      # Harness performs OIDC discovery and Plan readiness checks separately.
+      test: ["CMD", "/usr/local/bin/mas-cli", "config", "check", "--config=/config.yaml", "--config=/secrets.json", "--config=/runtime-identity.yaml"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - ./mas.yaml:/config.yaml:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/mas.identity.yaml:/runtime-identity.yaml:ro
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/mas.secrets.yaml:/secrets.yaml:ro
+    networks:
+      edge_mas_net:
+        aliases:
+          - mas-edge
+      synapse_mas_net:
+        aliases:
+          - mas-synapse
+      mas_egress_net:
+        gw_priority: 1
+      plan_mas_net:
+        aliases:
+          - mas-plan
+      mas_admin_net:
+        aliases:
+          - mas-admin
+    secrets:
+      - source: mas_secrets_json
+        target: /secrets.json
+        uid: "991"
+        gid: "991"
+        mode: 0400
 
-  # ── controlplane: public agent-registration shim (POST /redpill only, routed by Caddy). Privilege
-  # boundary: holds NO credentials of any kind — no env_file at all. It drives MAS's public
-  # registration form and public/native-client OAuth device flow over telecrypt_net; it never
+  # ── registration: public agent-registration shim (POST /agents only, routed by Caddy). Privilege
+  # boundary: holds NO credentials of any kind. It drives MAS's public
+  # registration form and public/native-client OAuth device flow over its dedicated networks; it never
   # mints a Matrix password token or calls m.login.password. ────────────────────────────────────
-  controlplane:
-    image: ghcr.io/telecrypt-io/controlplane:0.4.0
-    container_name: tc_controlplane
+  # The exact Controlplane image defaults to Registration; the deployment boundary keeps the
+  # component-specific service name and command contract explicit below.
+  registration:
+    image: ${CONTROLPLANE_IMAGE:?set CONTROLPLANE_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net ]
+    networks:
+      edge_registration_net:
+      registration_egress_net:
+        gw_priority: 1
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -120,21 +178,28 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     environment:
-      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
     depends_on:
       mas:
         condition: service_started
 
   # ── janitor: the ONE component holding a standing MAS admin credential (lock stale
-  # unclaimed accounts + owner sign-up digest). Same image, different entrypoint. No listening
+  # unclaimed accounts + owner sign-up digest). Same image, different command. No listening
   # port, no Caddy route, zero inbound surface. The source derives the cashier-admin exclusion
-  # from SERVER_NAME; the one-shot job is invoked daily via systemd timer. ───────────────────────
+  # from SERVER_NAME; this repository provides no scheduler, so the profile is invoked explicitly
+  # by the owner/Harness orchestration after readiness checks. ───────────────────────────────────
   janitor:
-    image: ghcr.io/telecrypt-io/controlplane:0.4.0
-    container_name: tc_janitor
+    image: ${CONTROLPLANE_IMAGE:?set CONTROLPLANE_IMAGE}
     restart: "no"
-    networks: [ telecrypt_net ]
+    # This one-shot is intentionally excluded from the default stack start. Harness starts the
+    # profile only after Harness completes its OIDC discovery and Plan readiness checks.
+    profiles: [janitor]
+    # mas_admin_net carries only MAS's admin listener; Janitor's database/SMTP egress is isolated
+    # on its own external network.
+    networks:
+      mas_admin_net:
+      janitor_egress_net:
+        gw_priority: 1
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -144,23 +209,34 @@ services:
       options: { max-size: "10m", max-file: "3" }
     command: ["/janitor"]
     environment:
-      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-    # locker.secrets.env: MAS_ADMIN_CLIENT_ID/SECRET, JANITOR_DB_URL, OWNER_EMAIL, SMTP_*.
-    # env_file is read by the rootless Compose operator, not by the container uid.
-    env_file:
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/locker.secrets.env
+      - BILLING_ENVIRONMENT=${BILLING_ENVIRONMENT:?set BILLING_ENVIRONMENT}
+      - MAS_ADMIN_CLIENT_ID=${MAS_ADMIN_CLIENT_ID:?set MAS_ADMIN_CLIENT_ID}
+      - MAS_ADMIN_CLIENT_SECRET=${MAS_ADMIN_CLIENT_SECRET:?set MAS_ADMIN_CLIENT_SECRET}
+      - JANITOR_DB_URL=${JANITOR_DB_URL:?set JANITOR_DB_URL}
+      # Dry-run mode is an explicit safety switch; Controlplane rejects missing, empty, or invalid
+      # values and forbids dry-run mode on the production server name.
+      - OWNER_EMAIL=${OWNER_EMAIL:-}
+      - JANITOR_DRY_RUN=${JANITOR_DRY_RUN:?set JANITOR_DRY_RUN}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
     depends_on:
       mas:
-        condition: service_started
+        condition: service_healthy
+      cashier:
+        condition: service_healthy
 
-  # ── steward: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
+  # ── plan: public browser boundary. It authenticates via MAS and signs narrowly-scoped requests
   # to Cashier; it has no Dodo, Synapse-admin, or database credential. ─────────────────────────
-  steward:
-    image: ghcr.io/telecrypt-io/controlplane:0.4.0
-    container_name: tc_steward
+  plan:
+    image: ${CONTROLPLANE_IMAGE:?set CONTROLPLANE_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net, cashier_plan_net ]
+    networks:
+      edge_plan_net:
+      plan_mas_net:
+      plan_cashier_net:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -168,24 +244,30 @@ services:
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
-    command: ["/steward"]
+    command: ["/plan"]
     environment:
-      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
-    env_file:
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/steward.secrets.env
+      - BILLING_ENVIRONMENT=${BILLING_ENVIRONMENT:?set BILLING_ENVIRONMENT}
+      - MAS_OIDC_CLIENT_ID=${MAS_OIDC_CLIENT_ID:?set MAS_OIDC_CLIENT_ID}
+      - MAS_OIDC_CLIENT_SECRET=${MAS_OIDC_CLIENT_SECRET:?set MAS_OIDC_CLIENT_SECRET}
+      - PLAN_SESSION_KEY=${PLAN_SESSION_KEY:?set PLAN_SESSION_KEY}
+      - PLAN_ASSERTION_PRIVATE_KEY=${PLAN_ASSERTION_PRIVATE_KEY:?set PLAN_ASSERTION_PRIVATE_KEY}
     depends_on:
       mas:
         condition: service_started
 
   # ── cashier: private billing authority. Caddy routes only Dodo's signed webhook; Plan reaches
-  # its command API on the isolated cashier_plan_net using Ed25519 assertions. ───────────────────
+  # its command API on the isolated plan_cashier_net using Ed25519 assertions. Cashier reaches
+  # Synapse's fixed internal admin endpoint only through cashier_synapse_net. ───────────────────
   cashier:
-    image: ghcr.io/telecrypt-io/telecrypt-cashier:0.3.0
-    container_name: tc_cashier
+    image: ${CASHIER_IMAGE:?set CASHIER_IMAGE}
     restart: unless-stopped
-    networks: [ telecrypt_net, cashier_plan_net ]
+    networks:
+      edge_cashier_net:
+      plan_cashier_net:
+      cashier_synapse_net:
+      cashier_egress_net:
+        gw_priority: 1
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     read_only: true
@@ -194,17 +276,58 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
     environment:
-      - BILLING_ENV=${BILLING_ENV:?set BILLING_ENV}
       - SERVER_NAME=${SERVER_NAME:?set SERVER_NAME}
-      - BACKEND_PUBLIC_URL=https://${BACKEND_HOST:?set BACKEND_HOST}
+      - BILLING_ENVIRONMENT=${BILLING_ENVIRONMENT:?set BILLING_ENVIRONMENT}
+      - SYNAPSE_ADMIN_TOKEN=${SYNAPSE_ADMIN_TOKEN:?set SYNAPSE_ADMIN_TOKEN}
+      - CASHIER_DB_URL=${CASHIER_DB_URL:?set CASHIER_DB_URL}
+      - DODO_API_KEY=${DODO_API_KEY:?set DODO_API_KEY}
+      - DODO_WEBHOOK_SECRET=${DODO_WEBHOOK_SECRET:?set DODO_WEBHOOK_SECRET}
+      - DODO_PRODUCT_ID=${DODO_PRODUCT_ID:?set DODO_PRODUCT_ID}
+      - PLAN_ASSERTION_PUBLIC_KEY=${PLAN_ASSERTION_PUBLIC_KEY:?set PLAN_ASSERTION_PUBLIC_KEY}
       # Cashier uses Synapse's fixed internal admin endpoint and has no browser/OIDC routes.
-    # cashier.secrets.env: CASHIER_DB_URL and Cashier/provider credentials.
-    env_file:
-      - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/cashier.secrets.env
+    healthcheck:
+      test: ["CMD", "/cashier", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+# Compose environment-backed secrets below are populated only by the guarded deployer for the
+# Compose subprocess. They are intentionally not operator `.env` settings; Harness snapshots each
+# private service contract and exports only its exact keys to the owning container.
+secrets:
+  synapse_secrets_json:
+    environment: SYNAPSE_SECRETS_JSON
+  synapse_signing_key:
+    environment: SYNAPSE_SIGNING_KEY
+  mas_secrets_json:
+    environment: MAS_SECRETS_JSON
 
-# Shared application network.
+# Purpose-specific application networks. Edge and peer networks are internal; egress networks are
+# attached only to their documented service. Synapse and MAS keep separate egress paths so neither
+# service can reach external destinations through the other's network.
 networks:
-  telecrypt_net:
-    name: telecrypt_net
-  cashier_plan_net:
+  edge_synapse_net:
+    internal: true
+  edge_mas_net:
+    internal: true
+  edge_registration_net:
+    internal: true
+  edge_plan_net:
+    internal: true
+  edge_cashier_net:
+    internal: true
+  synapse_mas_net:
+    internal: true
+  synapse_egress_net:
+  mas_egress_net:
+  cashier_synapse_net:
+    internal: true
+  plan_mas_net:
+    internal: true
+  plan_cashier_net:
+    internal: true
+  registration_egress_net:
+  cashier_egress_net:
+  janitor_egress_net:
+  mas_admin_net:
     internal: true

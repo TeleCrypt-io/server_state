@@ -6,11 +6,13 @@
 .env
 *.env
 !.env.example
+!versions.env
 
 # Any real secrets files (only *.example.* may be committed)
 secrets/*
 !secrets/*.example.yaml
 !secrets/*.example.yml
+!secrets/*.example.json
 !secrets/*.example.env
 !secrets/README.md
 

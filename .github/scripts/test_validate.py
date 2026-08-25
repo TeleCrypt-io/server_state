@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import json
 import re
 import shlex
 import subprocess
@@ -242,6 +243,76 @@ class ManifestTests(unittest.TestCase):
         changed["org.telecrypt.controlplane.release"] = "latest"
         with self.assertRaises(AssertionError):
             validate.validate_synapse_provenance(labels, changed, "1.159-tc3", controlplane_version)
+
+    def test_published_image_config_allows_omitted_null_fields_only(self) -> None:
+        values = validate.load_manifest()
+        digest = "sha256:" + "a" * 64
+        synapse_labels = {
+            "org.opencontainers.image.source": "https://github.com/TeleCrypt-io/telecrypt-synapse",
+            "org.opencontainers.image.revision": "a" * 40,
+            "org.opencontainers.image.version": values["SYNAPSE_IMAGE"].rsplit(":", 1)[1],
+            "org.opencontainers.image.base.name": "ghcr.io/element-hq/synapse",
+            "org.opencontainers.image.base.version": "1.159.0",
+            "org.telecrypt.controlplane.release": values["CONTROLPLANE_IMAGE"].rsplit(":", 1)[1],
+            "org.telecrypt.s3-provider.version": "1.7.0",
+            "org.telecrypt.controlplane.wheel.sha256": "b" * 64,
+            "org.telecrypt.s3-provider.archive.sha256": "c" * 64,
+        }
+        product_labels = {
+            key: {
+                "org.opencontainers.image.source": f"https://github.com/TeleCrypt-io/{'controlplane' if key == 'CONTROLPLANE_IMAGE' else 'cashier'}",
+                "org.opencontainers.image.version": values[key].rsplit(":", 1)[1],
+                "org.opencontainers.image.revision": "d" * 40,
+                "io.telecrypt.config-contract": "1",
+            }
+            for key in ("CONTROLPLANE_IMAGE", "CASHIER_IMAGE")
+        }
+        base_configs = {
+            "CADDY_IMAGE": {"Cmd": ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]},
+            "SYNAPSE_IMAGE": {"Labels": synapse_labels},
+            "MAS_IMAGE": {"Entrypoint": ["/usr/local/bin/mas-cli"]},
+            "CONTROLPLANE_IMAGE": {"Cmd": ["/registration"], "Labels": product_labels["CONTROLPLANE_IMAGE"], "User": "991:991"},
+            "CASHIER_IMAGE": {"Entrypoint": ["/cashier"], "Labels": product_labels["CASHIER_IMAGE"], "User": "991:991"},
+        }
+
+        def write_fixture(directory: Path, mutate=None) -> None:
+            configs = {key: dict(config) for key, config in base_configs.items()}
+            if mutate is not None:
+                mutate(configs)
+            for key, image in values.items():
+                name = validate.image_reference_filename(image)
+                labels = synapse_labels if key == "SYNAPSE_IMAGE" else product_labels.get(key, {})
+                config_document = {"os": "linux", "architecture": "amd64", "config": configs[key]}
+                metadata = {
+                    "Name": image.rsplit(":", 1)[0],
+                    "Digest": digest,
+                    "Os": "linux",
+                    "Architecture": "amd64",
+                }
+                (directory / f"{name}.labels").write_text(json.dumps(labels), encoding="utf-8")
+                (directory / f"{name}.config").write_text(json.dumps(config_document), encoding="utf-8")
+                (directory / f"{name}.metadata").write_text(json.dumps(metadata), encoding="utf-8")
+
+        with tempfile.TemporaryDirectory(prefix="server-state-image-config-") as directory:
+            root = Path(directory)
+            valid = root / "valid"
+            valid.mkdir()
+            write_fixture(valid)
+            validate.validate_published_images(valid)
+
+            mutations = {
+                "missing-required-command": lambda configs: configs["CADDY_IMAGE"].pop("Cmd"),
+                "wrong-required-command": lambda configs: configs["CADDY_IMAGE"].update(Cmd=["unexpected"]),
+                "missing-required-entrypoint": lambda configs: configs["MAS_IMAGE"].pop("Entrypoint"),
+                "wrong-required-entrypoint": lambda configs: configs["MAS_IMAGE"].update(Entrypoint=["unexpected"]),
+            }
+            for name, mutation in mutations.items():
+                with self.subTest(name=name):
+                    invalid = root / name
+                    invalid.mkdir()
+                    write_fixture(invalid, mutation)
+                    with self.assertRaises(AssertionError):
+                        validate.validate_published_images(invalid)
 
 
 class CaddyRouteTests(unittest.TestCase):

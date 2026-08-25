@@ -707,7 +707,6 @@ def validate_published_images(directory: Path) -> None:
         check(metadata["Name"] in _metadata_name(repository), (key, "repository"))
         validate_image_platform(metadata, config_document)
         check(re.fullmatch(r"sha256:[0-9a-f]{64}", metadata["Digest"]), (key, "digest"))
-        check(all(field in config for field in ("Entrypoint", "Cmd")), (key, "config fields"))
         for field, expected in IMAGE_CONFIG.get(key, {}).items():
             check(config.get(field) == expected, (key, field, config.get(field)))
         images[key] = (labels, config, metadata)

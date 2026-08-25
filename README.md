@@ -58,7 +58,7 @@ one-shot `janitor` profile against the active exact state, without recreating or
 with the equivalent of Compose `--no-deps`.
 Every service runs as its image-supported non-root UID/GID with no new privileges and all Linux
 capabilities dropped. Each root filesystem is read-only; only Caddy's two private temporary
-directories, Synapse's UID-991 `/tmp`, and Synapse's external media directory are writable. Only
+directories, Synapse's UID-991 `/tmp`, and Synapse's disposable staging/cache mount are writable. Only
 Caddy publishes the unprivileged 8080 ingress port. It reaches each routed upstream through a
 dedicated internal edge network; Synapse and MAS share only their required peer network, Plan shares
 only its MAS and Cashier peer networks, Synapse and MAS share only the internal `synapse_mas_net` peer

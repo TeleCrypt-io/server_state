@@ -110,6 +110,7 @@ class ManifestTests(unittest.TestCase):
         mas = (Path(__file__).resolve().parents[2] / "mas.yaml").read_text(encoding="utf-8")
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         mas_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "mas.secrets.json").read_text(encoding="utf-8")
+        signing_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "synapse-signing-fixture.txt").read_text(encoding="utf-8")
         self.assertIn("SYNAPSE_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertIn("MAS_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertNotIn("secrets.yaml", compose + synapse + mas)
@@ -125,6 +126,7 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("HomeServerConfig", workflow)
         self.assertIn("load_config", workflow)
         self.assertNotIn("loader.read_config", workflow)
+        self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
         self.assertNotIn('"transport":"disabled"', workflow)
@@ -527,9 +529,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 self.assertEqual(parsed.stdout, expected + "\n", marker)
                 self.assertEqual(parsed.stderr, "", marker)
 
+            signing_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "synapse-signing-fixture.txt").read_text(encoding="utf-8").strip()
             for hostile in (
-                "ci-synapse-signing-fixture",
-                "telecrypt-synapse-proof:uid\nci-synapse-signing-fixture",
+                signing_fixture,
+                f"telecrypt-synapse-proof:uid\n{signing_fixture}",
                 "telecrypt-synapse-proof:uid\nnot-a-marker",
             ):
                 marker_file = root / "hostile-marker"

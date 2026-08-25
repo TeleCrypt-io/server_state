@@ -151,7 +151,8 @@ jobs:
           from pathlib import Path
 
           expected_json_keys = {"database", "matrix_authentication_service", "media_storage_providers", "macaroon_secret_key", "form_secret"}
-          expected = {"/signing.key": "ci-synapse-signing-fixture\n"}
+          expected = {"/signing.key": "ed25519 0 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n"}
+          signing_key_material = expected["/signing.key"].split()[2]
           def fail(status, marker):
               print(f"telecrypt-synapse-proof:{marker}", flush=True)
               raise SystemExit(status)
@@ -184,7 +185,7 @@ jobs:
           for variable in ("SYNAPSE_SECRETS_JSON", "SYNAPSE_SIGNING_KEY", "MAS_SECRETS_JSON"):
               if variable in environment:
                   fail(74, "environment-leak")
-          for value in set(expected.values()) | {"ci-synapse-signing-fixture", "ci-mas-secret-fixture"}:
+          for value in set(expected.values()) | {signing_key_material, "ci-mas-secret-fixture"}:
               if value in environment.values():
                   fail(74, "environment-leak")
           print("telecrypt-synapse-proof:success", flush=True)
@@ -288,7 +289,8 @@ jobs:
           fi
           for marker in \
             ci-synapse-secret-fixture \
-            ci-synapse-signing-fixture; do
+            'ed25519 0 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8' \
+            AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8; do
             if grep -F -- "$marker" <<<"$mas_check" >/dev/null; then
               mas_failure output-secret-isolation
             fi

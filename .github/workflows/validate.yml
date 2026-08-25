@@ -215,6 +215,9 @@ jobs:
           fi
           proof_class="$(container_sensitive_proof_class "$proof_status" "$synapse_output" "$synapse_output.stderr")"
           if [[ "$proof_class" != success ]]; then
+            if ! container_ci_fixture_diagnostic "$synapse_output.stderr" >&2; then
+              echo 'container setup diagnostic suppressed by fixture-safety gate' >&2
+            fi
             rm -f -- "$synapse_output" "$synapse_output.stderr"
             printf 'Synapse secret proof failed: %s; sensitive diagnostics were withheld\n' "$proof_class" >&2
             exit 1

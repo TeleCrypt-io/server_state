@@ -673,6 +673,50 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(unknown_preflight.stdout, "bounded-command\n")
             self.assertEqual(unknown_preflight.stderr, "")
 
+            safe_diagnostic = root / "safe-diagnostic"
+            safe_diagnostic.write_text("Error response from daemon: invalid runtime option\n", encoding="utf-8")
+            safe_result = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_ci_fixture_diagnostic {shlex.quote(str(safe_diagnostic))}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(safe_result.returncode, 0)
+            self.assertEqual(safe_result.stdout, "Error response from daemon: invalid runtime option\n")
+            self.assertEqual(safe_result.stderr, "")
+
+            for hostile in (
+                "failed for ci-secret-fixture\n",
+                "DODO_API_KEY=value\n",
+                "authorization: Bearer value\n",
+                "https://user:password@example.invalid/\n",
+                '{"secret":"value"}\n',
+                "github_pat_example\n",
+                "bad\x00byte\n",
+            ):
+                safe_diagnostic.write_bytes(hostile.encode("utf-8"))
+                rejected = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                        f"container_ci_fixture_diagnostic {shlex.quote(str(safe_diagnostic))}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(rejected.returncode, 0, hostile)
+                self.assertEqual(rejected.stdout, "", hostile)
+                self.assertEqual(rejected.stderr, "", hostile)
+
             output = root / "proof"
             failed = subprocess.run(
                 [

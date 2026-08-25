@@ -717,18 +717,25 @@ class ReleaseEvidenceTests(unittest.TestCase):
         proof_end = workflow.index("Verify UID-991 MAS secret isolation", proof_start)
         proof_block = workflow[proof_start:proof_end]
         self.assertIn('mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"', proof_block)
-        self.assertIn("-f .github/offline-proof.override.yml -f .github/synapse-secret-proof.override.yml", proof_block)
+        self.assertIn("-f .github/secret-proof.compose.yml", proof_block)
 
-        offline_override = (Path(__file__).resolve().parents[1] / "offline-proof.override.yml").read_text(encoding="utf-8")
-        secret_override = (Path(__file__).resolve().parents[1] / "synapse-secret-proof.override.yml").read_text(encoding="utf-8")
-        for service in ("synapse:", "mas:"):
-            self.assertIn(service, offline_override)
-        self.assertEqual(offline_override.count("network_mode: none"), 2)
-        self.assertEqual(offline_override.count("networks: !reset []"), 2)
-        self.assertIn("volumes: !reset []", secret_override)
-        self.assertIn("tmpfs: !reset []", secret_override)
-        self.assertNotIn("secrets:", secret_override)
-        self.assertGreaterEqual(workflow.count("-f compose.yml -f .github/offline-proof.override.yml"), 4)
+        proof_compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "secret-proof.compose.yml").read_text(encoding="utf-8"))
+        canonical_compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))
+        proof_services = proof_compose["services"]
+        canonical_services = canonical_compose["services"]
+        copied_fields = ("image", "user", "read_only", "security_opt", "cap_drop", "secrets")
+        for proof_name, canonical_name in (
+            ("synapse-secret-proof", "synapse"),
+            ("synapse-loader-proof", "synapse"),
+            ("mas-secret-proof", "mas"),
+        ):
+            for field in copied_fields:
+                self.assertEqual(proof_services[proof_name][field], canonical_services[canonical_name][field], (proof_name, field))
+            self.assertEqual(proof_services[proof_name]["network_mode"], "none")
+            self.assertNotIn("networks", proof_services[proof_name])
+            self.assertNotIn("depends_on", proof_services[proof_name])
+        self.assertNotIn("volumes", proof_services["synapse-secret-proof"])
+        self.assertGreaterEqual(workflow.count("-f .github/secret-proof.compose.yml"), 4)
 
         for status in range(70, 77):
             self.assertIn(f"fail({status},", workflow)

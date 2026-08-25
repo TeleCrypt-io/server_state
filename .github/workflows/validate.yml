@@ -155,9 +155,8 @@ jobs:
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"
           if container_bounded --sensitive 65536 "$synapse_output" 120 docker compose --ansi never --env-file .env.example \
-            -f compose.yml -f .github/offline-proof.override.yml -f .github/synapse-secret-proof.override.yml \
-            run --rm --no-deps \
-            --entrypoint python synapse -c '
+            -f .github/secret-proof.compose.yml run --rm --no-deps -T \
+            --entrypoint python synapse-secret-proof -c '
           import os
           import json
           import stat
@@ -277,8 +276,8 @@ jobs:
           }
           mas_output="$RUNNER_TEMP/mas-secret-proof.log"
           if ! container_bounded --sensitive 65536 "$mas_output" 120 docker compose --ansi never --env-file .env.example \
-            -f compose.yml -f .github/offline-proof.override.yml run \
-            --name "$mas_container" --no-deps --entrypoint /usr/local/bin/mas-cli mas \
+            -f .github/secret-proof.compose.yml run \
+            --name "$mas_container" --no-deps -T --entrypoint /usr/local/bin/mas-cli mas-secret-proof \
             config check --config=/config.yaml --config=/secrets.json --config=/runtime-identity.yaml >/dev/null; then
             rm -f -- "$mas_output" "$mas_output.stderr"
             echo "MAS secret proof failed; sensitive diagnostics were withheld" >&2
@@ -297,8 +296,8 @@ jobs:
           rm -f -- "$mas_output" "$mas_output.stderr"
           missing_output_file="$RUNNER_TEMP/mas-missing-secret-proof.log"
           if container_bounded --sensitive 65536 "$missing_output_file" 120 docker compose --ansi never --env-file .env.example \
-            -f compose.yml -f .github/offline-proof.override.yml run \
-            --name "$missing_container" --no-deps --entrypoint /usr/local/bin/mas-cli mas \
+            -f .github/secret-proof.compose.yml run \
+            --name "$missing_container" --no-deps -T --entrypoint /usr/local/bin/mas-cli mas-secret-proof \
             config check --config=/config.yaml --config=/secrets.json --config=/runtime-identity.yaml \
             --config=/signing.key >/dev/null; then
             echo "MAS unexpectedly opened Synapse's signing-key path" >&2
@@ -336,8 +335,8 @@ jobs:
           printf '%s\n' 'http:' '  public_base: https://backend.stage.telecrypt.io/auth/' '  issuer: https://backend.stage.telecrypt.io/auth/' > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_loader_output="$RUNNER_TEMP/synapse-json-loader.log"
           if ! container_bounded --sensitive 65536 "$synapse_loader_output" 120 docker compose --ansi never --env-file .env.example \
-            -f compose.yml -f .github/offline-proof.override.yml run --rm --no-deps \
-            --entrypoint python synapse -c '
+            -f .github/secret-proof.compose.yml run --rm --no-deps -T \
+            --entrypoint python synapse-loader-proof -c '
           import inspect
           from synapse.config.homeserver import HomeServerConfig
 

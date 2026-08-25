@@ -53,6 +53,11 @@ SECRET_ENV = {
     "synapse_signing_key": "SYNAPSE_SIGNING_KEY",
     "mas_secrets_json": "MAS_SECRETS_JSON",
 }
+SECRET_FILES = {
+    "synapse_secrets_json": "synapse.secrets.json",
+    "synapse_signing_key": "synapse_signing.key",
+    "mas_secrets_json": "mas.secrets.json",
+}
 JANITOR_ENV_KEYS = {
     "MAS_ADMIN_CLIENT_ID", "MAS_ADMIN_CLIENT_SECRET", "JANITOR_DB_URL", "OWNER_EMAIL",
     "JANITOR_DRY_RUN", "SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
@@ -352,7 +357,7 @@ def validate_source(values: dict[str, str]) -> None:
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env = assignments(env_text)
     sections = {service: service_section(compose, service) for service in SERVICES}
-    boundary = compose.index("\n# Compose environment-backed secrets")
+    boundary = compose.index("\n# Compose file-backed secrets")
     check(set(re.findall(r"(?m)^  ([a-z][a-z0-9_-]*):$", compose[:boundary])) == set(SERVICES), "service set")
     for service, key in SERVICE_IMAGES.items():
         check(re.findall(r"(?m)^    image: (.+)$", sections[service]) == [f"${{{key}:?set {key}}}"], (service, "image placeholder"))
@@ -378,7 +383,7 @@ def validate_source(values: dict[str, str]) -> None:
     check("BILLING_ENVIRONMENT=${BILLING_ENVIRONMENT:?set BILLING_ENVIRONMENT}" in "".join(sections[s] for s in ("janitor", "plan", "cashier")), "billing identity")
     check(set(env) == {"TELECRYPT_DATA_DIR", "SERVER_NAME", "BILLING_ENVIRONMENT", "INGRESS_BIND_ADDRESS", "TRUSTED_PROXY"}, env)
     validate_profile(env)
-    check(not set(env) & set(SECRET_ENV) and not set(env) & set(IMAGE_KEYS), "operator secret/image variables")
+    check(not set(env) & set(SECRET_ENV.values()) and not set(env) & set(IMAGE_KEYS), "operator secret/image variables")
     ingress = ipaddress.ip_address(env["INGRESS_BIND_ADDRESS"])
     check(str(ingress) == env["INGRESS_BIND_ADDRESS"] and not (ingress.is_unspecified or ingress.is_loopback or ingress.is_multicast or ingress.is_link_local), env["INGRESS_BIND_ADDRESS"])
     trusted = ipaddress.ip_interface(env["TRUSTED_PROXY"])
@@ -541,7 +546,7 @@ def validate_rendered(path: Path) -> None:
         check(set(actual_env) == SERVICE_ENV_KEYS[service], (service, "environment keys"))
         for key, value in runtime.items():
             check(actual_env.get(key) == value, (service, key))
-        check(not set(actual_env) & set(SECRET_ENV), (service, "secret environment"))
+        check(not set(actual_env) & set(SECRET_ENV.values()), (service, "secret environment"))
         check("env_file" not in settings, (service, "live env files"))
         check(settings.get("logging") == EXPECTED_LOGGING, (service, "log rotation"))
         check(settings.get("tmpfs", []) == EXPECTED_TMPFS.get(service, []), (service, "tmpfs"))
@@ -581,25 +586,25 @@ def validate_rendered(path: Path) -> None:
             check(settings.get("internal", False) is False, (name, "egress"))
         if "name" in settings:
             check(settings["name"] == f"{document['name']}_{name}", (name, "network name"))
-    check(set(document["secrets"]) == set(SECRET_ENV), "secret set")
-    for name, variable in SECRET_ENV.items():
+    check(set(document["secrets"]) == set(SECRET_FILES), "secret set")
+    expected_secret_files = {name: f"{data_dir}/secrets/{filename}" for name, filename in SECRET_FILES.items()}
+    for name, expected_file in expected_secret_files.items():
         secret = document["secrets"][name]
         check(
-            set(secret) <= {"environment", "name"}
-            and secret.get("environment") == variable
+            set(secret) <= {"file", "name"}
+            and secret.get("file") == expected_file
             and secret.get("name") in {None, name, f"{document['name']}_{name}"},
             (name, "secret source", secret),
         )
     secret_mounts = {
-        "synapse": {"synapse_secrets_json": ("/secrets.json", "991", "991", 0o400), "synapse_signing_key": ("/signing.key", "991", "991", 0o400)},
-        "mas": {"mas_secrets_json": ("/secrets.json", "991", "991", 0o400)},
+        "synapse": {"synapse_secrets_json": "/secrets.json", "synapse_signing_key": "/signing.key"},
+        "mas": {"mas_secrets_json": "/secrets.json"},
     }
     for service, expected in secret_mounts.items():
         found = {}
         for item in services[service].get("secrets", []):
-            check(set(item) == {"source", "target", "uid", "gid", "mode"}, (service, item))
-            mode = int(item["mode"], 8) if isinstance(item["mode"], str) else item["mode"]
-            found[item["source"]] = (item["target"], item["uid"], item["gid"], mode)
+            check(set(item) == {"source", "target"}, (service, item))
+            found[item["source"]] = item["target"]
         check(found == expected, (service, "secret mounts"))
     for service in ("caddy", "registration", "janitor", "plan", "cashier"):
         check(not services[service].get("secrets"), (service, "secret isolation"))

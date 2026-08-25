@@ -91,14 +91,8 @@ services:
     secrets:
       - source: synapse_secrets_json
         target: /secrets.json
-        uid: "991"
-        gid: "991"
-        mode: 0400
       - source: synapse_signing_key
         target: /signing.key
-        uid: "991"
-        gid: "991"
-        mode: 0400
     environment:
       - TMPDIR=/staging/tmp
     healthcheck:
@@ -156,9 +150,6 @@ services:
     secrets:
       - source: mas_secrets_json
         target: /secrets.json
-        uid: "991"
-        gid: "991"
-        mode: 0400
 
   # ── registration: public agent-registration shim (POST /agents only, routed by Caddy). Privilege
   # boundary: holds NO credentials of any kind. It drives MAS's public
@@ -294,16 +285,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-# Compose environment-backed secrets below are populated only by the guarded deployer for the
-# Compose subprocess. They are intentionally not operator `.env` settings; Harness snapshots each
-# private service contract and exports only its exact keys to the owning container.
+# Compose file-backed secrets below are populated only by the guarded deployer from the private
+# `${TELECRYPT_DATA_DIR}/secrets` contract. They are intentionally outside the operator `.env`.
 secrets:
   synapse_secrets_json:
-    environment: SYNAPSE_SECRETS_JSON
+    file: ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse.secrets.json
   synapse_signing_key:
-    environment: SYNAPSE_SIGNING_KEY
+    file: ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse_signing.key
   mas_secrets_json:
-    environment: MAS_SECRETS_JSON
+    file: ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/mas.secrets.json
 
 # Purpose-specific application networks. Edge and peer networks are internal; egress networks are
 # attached only to their documented service. Synapse and MAS keep separate egress paths so neither

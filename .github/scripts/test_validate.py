@@ -109,6 +109,7 @@ class ManifestTests(unittest.TestCase):
         synapse = (Path(__file__).resolve().parents[2] / "synapse.yaml").read_text(encoding="utf-8")
         mas = (Path(__file__).resolve().parents[2] / "mas.yaml").read_text(encoding="utf-8")
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        mas_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "mas.secrets.json").read_text(encoding="utf-8")
         self.assertIn("SYNAPSE_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertIn("MAS_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertNotIn("secrets.yaml", compose + synapse + mas)
@@ -123,7 +124,7 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("postgres_mas", mas)
         self.assertIn("HomeServerConfig", workflow)
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
-        self.assertIn('"client_auth_method":"client_secret_basic"', workflow)
+        self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
         self.assertNotIn('"transport":"disabled"', workflow)
         self.assertNotIn("SYNAPSE_SECRETS_YAML", workflow)
         self.assertNotIn("MAS_SECRETS_YAML", workflow)
@@ -140,18 +141,20 @@ class ManifestTests(unittest.TestCase):
                 {
                     "source": "synapse_secrets_json",
                     "target": "/secrets.json",
-                    "uid": "991",
-                    "gid": "991",
-                    "mode": 0o400,
                 },
                 {
                     "source": "synapse_signing_key",
                     "target": "/signing.key",
-                    "uid": "991",
-                    "gid": "991",
-                    "mode": 0o400,
                 },
             ],
+        )
+        self.assertEqual(
+            yaml.safe_load(compose)["secrets"],
+            {
+                "synapse_secrets_json": {"file": "${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse.secrets.json"},
+                "synapse_signing_key": {"file": "${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/synapse_signing.key"},
+                "mas_secrets_json": {"file": "${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/secrets/mas.secrets.json"},
+            },
         )
 
     def test_manifest_has_exactly_five_versioned_images(self) -> None:
@@ -483,8 +486,6 @@ class ReleaseEvidenceTests(unittest.TestCase):
             "success": "success",
             "uid": "uid",
             "mount-content": "mount-content",
-            "mount-owner": "mount-owner",
-            "mount-mode": "mount-mode",
             "secrets-json": "secrets-json",
             "forbidden-mount": "forbidden-mount",
             "environment-leak": "environment-leak",
@@ -588,7 +589,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 "invalid mount config for type bind: bind source path does not exist: ci-secret-fixture": "mount-source",
                 'OCI runtime create failed: exec: "python": executable file not found in $PATH ci-secret-fixture': "entrypoint-executable",
                 "failed to create secret ci-secret-fixture: secret not found": "compose-secrets",
-                "required variable SYNAPSE_SECRETS_JSON is not set: ci-secret-fixture": "compose-config",
+                "secret source file does not exist: ci-secret-fixture": "compose-secrets",
                 "permission denied while opening ci-secret-fixture": "runtime-permission",
                 "operation not permitted while opening ci-secret-fixture": "runtime-permission",
                 "read-only file system while opening ci-secret-fixture": "runtime-permission",
@@ -673,50 +674,6 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(unknown_preflight.stdout, "bounded-command\n")
             self.assertEqual(unknown_preflight.stderr, "")
 
-            safe_diagnostic = root / "safe-diagnostic"
-            safe_diagnostic.write_text("Error response from daemon: invalid runtime option\n", encoding="utf-8")
-            safe_result = subprocess.run(
-                [
-                    "/bin/bash",
-                    "-c",
-                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
-                    f"container_ci_fixture_diagnostic {shlex.quote(str(safe_diagnostic))}",
-                ],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            self.assertEqual(safe_result.returncode, 0)
-            self.assertEqual(safe_result.stdout, "Error response from daemon: invalid runtime option\n")
-            self.assertEqual(safe_result.stderr, "")
-
-            for hostile in (
-                "failed for ci-secret-fixture\n",
-                "DODO_API_KEY=value\n",
-                "authorization: Bearer value\n",
-                "https://user:password@example.invalid/\n",
-                '{"secret":"value"}\n',
-                "github_pat_example\n",
-                "bad\x00byte\n",
-            ):
-                safe_diagnostic.write_bytes(hostile.encode("utf-8"))
-                rejected = subprocess.run(
-                    [
-                        "/bin/bash",
-                        "-c",
-                        f"source {shlex.quote(str(CONTAINER_HELPER))}; "
-                        f"container_ci_fixture_diagnostic {shlex.quote(str(safe_diagnostic))}",
-                    ],
-                    cwd=root,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                self.assertNotEqual(rejected.returncode, 0, hostile)
-                self.assertEqual(rejected.stdout, "", hostile)
-                self.assertEqual(rejected.stderr, "", hostile)
-
             output = root / "proof"
             failed = subprocess.run(
                 [
@@ -760,8 +717,11 @@ class ReleaseEvidenceTests(unittest.TestCase):
         proof_start = workflow.index("      - name: Verify UID-991 secret runtime contract")
         proof_end = workflow.index("Verify UID-991 MAS secret isolation", proof_start)
         proof_block = workflow[proof_start:proof_end]
-        self.assertIn('mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"', proof_block)
         self.assertIn("-f .github/secret-proof.compose.yml", proof_block)
+        self.assertNotIn('mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"', proof_block)
+        self.assertIn('install -d -m 700 "$fixture_secrets"', workflow)
+        self.assertIn("install -m 444 .github/fixtures/synapse.secrets.json", workflow)
+        self.assertIn("install -m 444 .github/fixtures/synapse-signing-fixture.txt", workflow)
 
         proof_compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "secret-proof.compose.yml").read_text(encoding="utf-8"))
         canonical_compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))
@@ -781,7 +741,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertNotIn("volumes", proof_services["synapse-secret-proof"])
         self.assertGreaterEqual(workflow.count("-f .github/secret-proof.compose.yml"), 4)
 
-        for status in range(70, 77):
+        for status in range(70, 75):
             self.assertIn(f"fail({status},", workflow)
 
     def test_product_tag_evidence_binds_exact_api_urls(self) -> None:

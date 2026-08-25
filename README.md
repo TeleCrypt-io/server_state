@@ -33,8 +33,10 @@ only to the guarded Compose process; Compose does not read live service `env_fil
 committed `.env.example` contains TEST-NET documentation values only; replace them through the private
 deployment procedure before activation.
 
-The Matrix private inputs are `synapse.secrets.json` and `mas.secrets.json`; Harness validates their
-bounded JSON contracts before passing them as `/secrets.json` Compose config layers. The MAS overlay
+The Matrix private inputs are `${TELECRYPT_DATA_DIR}/secrets/synapse.secrets.json`,
+`${TELECRYPT_DATA_DIR}/secrets/synapse_signing.key`, and `${TELECRYPT_DATA_DIR}/secrets/mas.secrets.json`;
+Harness validates their bounded contracts before passing them as file-backed Compose secrets; the
+signing key is mounted as `/signing.key`. The MAS overlay
 contains only its encryption/signing secrets, database URI, Matrix shared secret, and two exact
 environment-bound clients. Email and policy defaults remain in `mas.yaml`; the final runtime
 identity layer supplies the Janitor admin-client ID. The committed base configs retain reviewed

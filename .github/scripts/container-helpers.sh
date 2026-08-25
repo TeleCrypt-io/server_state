@@ -5,7 +5,7 @@ readonly CONTAINER_HELPERS_DIR
 
 container_sensitive_failure_class() {
   case "${1:-}" in
-    success|uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)
+    success|uid|mount-content|secrets-json|forbidden-mount|environment-leak)
       printf '%s\n' "$1"
       ;;
     *) return 1 ;;
@@ -16,7 +16,7 @@ container_sensitive_marker_class() {
   local output="${1:-}" candidate
   [[ -f "$output" ]] || return 1
   candidate="$(awk '
-    NR == 1 && $0 ~ /^telecrypt-synapse-proof:(success|uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)$/ {
+    NR == 1 && $0 ~ /^telecrypt-synapse-proof:(success|uid|mount-content|secrets-json|forbidden-mount|environment-leak)$/ {
       class = $0
       sub(/^telecrypt-synapse-proof:/, "", class)
       next
@@ -108,7 +108,7 @@ container_sensitive_proof_class() {
   marker="$(container_sensitive_marker_class "$output" || true)"
   if (( status != 0 )); then
     case "$marker" in
-      uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)
+      uid|mount-content|secrets-json|forbidden-mount|environment-leak)
         container_sensitive_failure_class "$marker"
         ;;
       success)
@@ -137,43 +137,6 @@ container_sensitive_proof_class() {
   else
     printf '%s\n' 'output-contract'
   fi
-}
-
-# Temporary CI-only visibility for the fixed public fixture. Production values never enter this
-# workflow. Any token-like, assignment-like, structured, non-printable, or fixture-bearing output
-# is suppressed wholesale instead of being partially redacted.
-container_ci_fixture_diagnostic() {
-  local stderr_file="${1:-}"
-  [[ -f "$stderr_file" ]] || return 1
-  /usr/bin/python3 - "$stderr_file" <<'PY'
-import pathlib
-import re
-import sys
-
-path = pathlib.Path(sys.argv[1])
-try:
-    raw = path.read_bytes()
-    text = raw.decode("utf-8")
-except (OSError, UnicodeError):
-    raise SystemExit(1)
-if not raw or len(raw) > 65536:
-    raise SystemExit(1)
-if any(ord(character) < 32 and character not in "\t\n\r" for character in text):
-    raise SystemExit(1)
-blocked = (
-    r"ci-",
-    r"01ARZ",
-    r"0123456789abcdef0123456789abcdef",
-    r"ghp_|github_pat_",
-    r"[{}]",
-    r"://[^\s/@]+:[^@/\s]+@",
-    r"(?:^|\s)[A-Z][A-Z0-9_]{2,}=",
-    r"authorization\s*:\s*(?:basic|bearer)",
-)
-if any(re.search(pattern, text, re.IGNORECASE | re.MULTILINE) for pattern in blocked):
-    raise SystemExit(1)
-sys.stdout.write(text)
-PY
 }
 
 container_bounded() {

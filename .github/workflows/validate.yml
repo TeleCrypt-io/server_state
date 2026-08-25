@@ -105,12 +105,6 @@ jobs:
           test "$release_commit" = "$(git_value rev-parse refs/remotes/origin/main)"
 
       - name: Validate Compose
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: >-
-            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
@@ -128,6 +122,11 @@ jobs:
             export "$key=ci-compose-fixture"
           done
           mkdir -p "$TELECRYPT_DATA_DIR"
+          fixture_secrets="$TELECRYPT_DATA_DIR/secrets"
+          install -d -m 700 "$fixture_secrets"
+          install -m 444 .github/fixtures/synapse.secrets.json "$fixture_secrets/synapse.secrets.json"
+          install -m 444 .github/fixtures/synapse-signing-fixture.txt "$fixture_secrets/synapse_signing.key"
+          install -m 444 .github/fixtures/mas.secrets.json "$fixture_secrets/mas.secrets.json"
           rendered_compose="$RUNNER_TEMP/server-state-compose.json"
           container_bounded --sensitive 1048576 "$rendered_compose" 120 \
             docker compose --profile janitor --env-file .env.example config --format json >/dev/null
@@ -140,30 +139,19 @@ jobs:
           python3 .github/scripts/validate.py rendered-compose "$COMPOSE_RENDERED_JSON"
 
       - name: Verify UID-991 secret runtime contract
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: >-
-            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
-          mkdir -p "$TELECRYPT_DATA_DIR/runtime"
-          mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"
-          install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
-          install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"
           if container_bounded --sensitive 65536 "$synapse_output" 120 docker compose --ansi never --env-file .env.example \
             -f .github/secret-proof.compose.yml run --rm --no-deps -T \
             --entrypoint python synapse-secret-proof -c '
           import os
           import json
-          import stat
           from pathlib import Path
 
           expected_json_keys = {"database", "matrix_authentication_service", "media_storage_providers", "macaroon_secret_key", "form_secret"}
-          expected = {"/signing.key": "ci-synapse-signing-fixture"}
+          expected = {"/signing.key": "ci-synapse-signing-fixture\n"}
           def fail(status, marker):
               print(f"telecrypt-synapse-proof:{marker}", flush=True)
               raise SystemExit(status)
@@ -178,35 +166,27 @@ jobs:
                   fail(71, "mount-content")
               if content != value:
                   fail(71, "mount-content")
-              try:
-                  metadata = mounted.stat()
-              except OSError:
-                  fail(72, "mount-owner")
-              if metadata.st_uid != 991:
-                  fail(72, "mount-owner")
-              if stat.S_IMODE(metadata.st_mode) != 0o400:
-                  fail(73, "mount-mode")
           try:
               synapse_json = json.loads(Path("/secrets.json").read_text(encoding="utf-8"))
           except (OSError, UnicodeError, ValueError):
-              fail(74, "secrets-json")
+              fail(72, "secrets-json")
           if not isinstance(synapse_json, dict) or set(synapse_json) != expected_json_keys:
-              fail(74, "secrets-json")
+              fail(72, "secrets-json")
           for forbidden in ("/mas-secrets.json", "/run/secrets/mas_secrets_json"):
               try:
                   Path(forbidden).lstat()
               except FileNotFoundError:
                   continue
               except OSError:
-                  fail(75, "forbidden-mount")
-              fail(75, "forbidden-mount")
+                  fail(73, "forbidden-mount")
+              fail(73, "forbidden-mount")
           environment = os.environ
           for variable in ("SYNAPSE_SECRETS_JSON", "SYNAPSE_SIGNING_KEY", "MAS_SECRETS_JSON"):
               if variable in environment:
-                  fail(76, "environment-leak")
-          for value in set(expected.values()) | {"ci-mas-secret-fixture"}:
+                  fail(74, "environment-leak")
+          for value in set(expected.values()) | {"ci-synapse-signing-fixture", "ci-mas-secret-fixture"}:
               if value in environment.values():
-                  fail(76, "environment-leak")
+                  fail(74, "environment-leak")
           print("telecrypt-synapse-proof:success", flush=True)
           ' >/dev/null; then
             proof_status=0
@@ -215,9 +195,6 @@ jobs:
           fi
           proof_class="$(container_sensitive_proof_class "$proof_status" "$synapse_output" "$synapse_output.stderr")"
           if [[ "$proof_class" != success ]]; then
-            if ! container_ci_fixture_diagnostic "$synapse_output.stderr" >&2; then
-              echo 'container setup diagnostic suppressed by fixture-safety gate' >&2
-            fi
             rm -f -- "$synapse_output" "$synapse_output.stderr"
             printf 'Synapse secret proof failed: %s; sensitive diagnostics were withheld\n' "$proof_class" >&2
             exit 1
@@ -228,11 +205,6 @@ jobs:
       # The pinned MAS image is distroless; use its bundled mas-cli directly rather than assuming
       # a shell or Python diagnostic exists. Capture config output so fixture values never reach CI logs.
       - name: Verify UID-991 MAS secret isolation
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: '{"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}'
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
@@ -321,15 +293,9 @@ jobs:
             exit 1
           fi
           trap - EXIT
-          echo "MAS uid 991 read its own 0400 secret and could not open Synapse signing.key"
+          echo "MAS uid 991 read its own file-backed secret and could not open Synapse signing.key"
 
       - name: Verify pinned Synapse JSON config loader
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: >-
-            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
@@ -365,12 +331,6 @@ jobs:
           rm -f -- "$synapse_loader_output" "$synapse_loader_output.stderr"
 
       - name: Verify exact selected container images
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: >-
-            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
@@ -385,12 +345,6 @@ jobs:
           python3 .github/scripts/validate.py image-list "$images_file"
 
       - name: Validate Caddy
-        env:
-          SYNAPSE_SECRETS_JSON: >-
-            {"database":{"args":{"user":"telecrypt_synapse_stage_user","password":"ci-synapse-db-secret","database":"telecrypt_synapse_stage","host":"db.invalid","port":5432,"sslmode":"verify-full","connect_timeout":5}},"matrix_authentication_service":{"secret":"ci-matrix-secret"},"media_storage_providers":[{"module":"s3_storage_provider.S3StorageProviderBackend","store_local":true,"store_remote":false,"store_synchronous":true,"config":{"bucket":"ci-bucket","region_name":"us-east-1","endpoint_url":"https://s3.telecrypt.io","access_key_id":"ci-access","secret_access_key":"ci-secret"}}],"macaroon_secret_key":"ci-macaroon-secret","form_secret":"ci-form-secret"}
-          SYNAPSE_SIGNING_KEY: ci-synapse-signing-fixture
-          MAS_SECRETS_JSON: >-
-            {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh

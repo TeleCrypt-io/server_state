@@ -717,6 +717,18 @@ class ReleaseEvidenceTests(unittest.TestCase):
         proof_end = workflow.index("Verify UID-991 MAS secret isolation", proof_start)
         proof_block = workflow[proof_start:proof_end]
         self.assertIn('mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"', proof_block)
+        self.assertIn("-f .github/offline-proof.override.yml -f .github/synapse-secret-proof.override.yml", proof_block)
+
+        offline_override = (Path(__file__).resolve().parents[1] / "offline-proof.override.yml").read_text(encoding="utf-8")
+        secret_override = (Path(__file__).resolve().parents[1] / "synapse-secret-proof.override.yml").read_text(encoding="utf-8")
+        for service in ("synapse:", "mas:"):
+            self.assertIn(service, offline_override)
+        self.assertEqual(offline_override.count("network_mode: none"), 2)
+        self.assertEqual(offline_override.count("networks: !reset []"), 2)
+        self.assertIn("volumes: !reset []", secret_override)
+        self.assertIn("tmpfs: !reset []", secret_override)
+        self.assertNotIn("secrets:", secret_override)
+        self.assertGreaterEqual(workflow.count("-f compose.yml -f .github/offline-proof.override.yml"), 4)
 
         for status in range(70, 77):
             self.assertIn(f"fail({status},", workflow)

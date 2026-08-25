@@ -1,0 +1,13 @@
+# CI-only isolation overlay. The canonical Compose file remains the source of service images,
+# users, security settings, volumes, and secret grants; these proofs do not need a network.
+services:
+  synapse:
+    networks: !reset []
+    depends_on: !reset {}
+    healthcheck: !reset null
+    network_mode: none
+  mas:
+    networks: !reset []
+    depends_on: !reset {}
+    healthcheck: !reset null
+    network_mode: none

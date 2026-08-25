@@ -480,33 +480,107 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
     def test_sensitive_proof_failures_have_fixed_classes_without_diagnostics(self) -> None:
         classifications = {
-            "70": "uid",
-            "71": "mount-content",
-            "72": "mount-owner",
-            "73": "mount-mode",
-            "74": "secrets-json",
-            "75": "forbidden-mount",
-            "76": "environment-leak",
-            "124": "timeout",
-            "17": "bounded-command",
+            "success": "success",
+            "uid": "uid",
+            "mount-content": "mount-content",
+            "mount-owner": "mount-owner",
+            "mount-mode": "mount-mode",
+            "secrets-json": "secrets-json",
+            "forbidden-mount": "forbidden-mount",
+            "environment-leak": "environment-leak",
         }
         with tempfile.TemporaryDirectory(prefix="server-state-sensitive-class-") as directory:
             root = Path(directory)
-            for status, expected in classifications.items():
+            for marker, expected in classifications.items():
                 result = subprocess.run(
                     [
                         "/bin/bash",
                         "-c",
-                        f"source {shlex.quote(str(CONTAINER_HELPER))}; container_sensitive_failure_class {status}",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; container_sensitive_failure_class {shlex.quote(marker)}",
                     ],
                     cwd=root,
                     capture_output=True,
                     text=True,
                     check=False,
                 )
-                self.assertEqual(result.returncode, 0, status)
-                self.assertEqual(result.stdout, expected + "\n", status)
-                self.assertEqual(result.stderr, "", status)
+                self.assertEqual(result.returncode, 0, marker)
+                self.assertEqual(result.stdout, expected + "\n", marker)
+                self.assertEqual(result.stderr, "", marker)
+
+                marker_file = root / "marker"
+                marker_file.write_text(f"telecrypt-synapse-proof:{marker}\n", encoding="utf-8")
+                parsed = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; container_sensitive_marker_class {shlex.quote(str(marker_file))}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(parsed.returncode, 0, marker)
+                self.assertEqual(parsed.stdout, expected + "\n", marker)
+                self.assertEqual(parsed.stderr, "", marker)
+
+            for hostile in (
+                "ci-synapse-signing-fixture",
+                "telecrypt-synapse-proof:uid\nci-synapse-signing-fixture",
+                "telecrypt-synapse-proof:uid\nnot-a-marker",
+            ):
+                marker_file = root / "hostile-marker"
+                marker_file.write_text(hostile, encoding="utf-8")
+                rejected = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; container_sensitive_marker_class {shlex.quote(str(marker_file))}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(rejected.returncode, 0, hostile)
+                self.assertEqual(rejected.stdout, "", hostile)
+                self.assertEqual(rejected.stderr, "", hostile)
+
+            marker_file = root / "marker"
+            stderr_file = root / "stderr"
+            marker_file.write_text("telecrypt-synapse-proof:success\n", encoding="utf-8")
+            stderr_file.write_text("warning: private diagnostic\n", encoding="utf-8")
+            rejected_stderr = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_sensitive_proof_class 1 {shlex.quote(str(marker_file))} {shlex.quote(str(stderr_file))}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(rejected_stderr.returncode, 0)
+            self.assertEqual(rejected_stderr.stdout, "stderr-diagnostics\n")
+            self.assertEqual(rejected_stderr.stderr, "")
+
+            no_marker = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_sensitive_proof_class 1 {shlex.quote(str(root / 'missing'))} {shlex.quote(str(stderr_file))}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(no_marker.returncode, 0)
+            self.assertEqual(no_marker.stdout, "bounded-command\n")
+            self.assertEqual(no_marker.stderr, "")
 
             output = root / "proof"
             failed = subprocess.run(
@@ -527,10 +601,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(failed.stderr, "")
 
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
-        self.assertIn("container_sensitive_failure_class", workflow)
+        self.assertIn("container_sensitive_proof_class", workflow)
         self.assertIn("proof_status=$?", workflow)
         for status in range(70, 77):
-            self.assertIn(f"raise SystemExit({status})", workflow)
+            self.assertIn(f"fail({status},", workflow)
 
     def test_product_tag_evidence_binds_exact_api_urls(self) -> None:
         key = "CASHIER_IMAGE"

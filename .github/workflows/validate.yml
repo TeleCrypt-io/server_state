@@ -162,76 +162,63 @@ jobs:
 
           expected_json_keys = {"database", "matrix_authentication_service", "media_storage_providers", "macaroon_secret_key", "form_secret"}
           expected = {"/signing.key": "ci-synapse-signing-fixture"}
+          def fail(status, marker):
+              print(f"telecrypt-synapse-proof:{marker}", flush=True)
+              raise SystemExit(status)
+
           if os.getuid() != 991:
-              raise SystemExit(70)
+              fail(70, "uid")
           for path, value in expected.items():
               mounted = Path(path)
               try:
                   content = mounted.read_text(encoding="utf-8")
               except (OSError, UnicodeError):
-                  raise SystemExit(71)
+                  fail(71, "mount-content")
               if content != value:
-                  raise SystemExit(71)
+                  fail(71, "mount-content")
               try:
                   metadata = mounted.stat()
               except OSError:
-                  raise SystemExit(72)
+                  fail(72, "mount-owner")
               if metadata.st_uid != 991:
-                  raise SystemExit(72)
+                  fail(72, "mount-owner")
               if stat.S_IMODE(metadata.st_mode) != 0o400:
-                  raise SystemExit(73)
+                  fail(73, "mount-mode")
           try:
               synapse_json = json.loads(Path("/secrets.json").read_text(encoding="utf-8"))
           except (OSError, UnicodeError, ValueError):
-              raise SystemExit(74)
+              fail(74, "secrets-json")
           if not isinstance(synapse_json, dict) or set(synapse_json) != expected_json_keys:
-              raise SystemExit(74)
+              fail(74, "secrets-json")
           for forbidden in ("/mas-secrets.json", "/run/secrets/mas_secrets_json"):
               try:
                   Path(forbidden).lstat()
               except FileNotFoundError:
                   continue
               except OSError:
-                  raise SystemExit(75)
-              raise SystemExit(75)
+                  fail(75, "forbidden-mount")
+              fail(75, "forbidden-mount")
           environment = os.environ
           for variable in ("SYNAPSE_SECRETS_JSON", "SYNAPSE_SIGNING_KEY", "MAS_SECRETS_JSON"):
               if variable in environment:
-                  raise SystemExit(76)
+                  fail(76, "environment-leak")
           for value in set(expected.values()) | {"ci-mas-secret-fixture"}:
               if value in environment.values():
-                  raise SystemExit(76)
-          print("uid-991 secret mount readable with only Synapse grants")
+                  fail(76, "environment-leak")
+          print("telecrypt-synapse-proof:success", flush=True)
           ' >/dev/null; then
             proof_status=0
           else
             proof_status=$?
+          fi
+          proof_class="$(container_sensitive_proof_class "$proof_status" "$synapse_output" "$synapse_output.stderr")"
+          if [[ "$proof_class" != success ]]; then
             rm -f -- "$synapse_output" "$synapse_output.stderr"
-            printf 'Synapse secret proof failed: %s; sensitive diagnostics were withheld\n' \
-              "$(container_sensitive_failure_class "$proof_status")" >&2
+            printf 'Synapse secret proof failed: %s; sensitive diagnostics were withheld\n' "$proof_class" >&2
             exit 1
           fi
-          output="$(<"$synapse_output")"
-          if [[ "$(tail -n 1 <<<"$output")" != "uid-991 secret mount readable with only Synapse grants" ]]; then
-            rm -f -- "$synapse_output" "$synapse_output.stderr"
-            echo 'Synapse secret proof failed: output-contract; sensitive diagnostics were withheld' >&2
-            exit 1
-          fi
-          for marker in \
-            ci-synapse-secret-fixture \
-            ci-synapse-signing-fixture \
-            ci-mas-secret-fixture \
-            synapse_secrets_json \
-            synapse_signing_key \
-            mas_secrets_json; do
-            if grep -F -- "$marker" <<<"$output" >/dev/null; then
-              rm -f -- "$synapse_output" "$synapse_output.stderr"
-              echo 'Synapse secret proof failed: output-leak; sensitive diagnostics were withheld' >&2
-              exit 1
-            fi
-          done
-          printf '%s\n' "$output"
           rm -f -- "$synapse_output" "$synapse_output.stderr"
+          echo 'uid-991 secret mount readable with only Synapse grants'
 
       # The pinned MAS image is distroless; use its bundled mas-cli directly rather than assuming
       # a shell or Python diagnostic exists. Capture config output so fixture values never reach CI logs.

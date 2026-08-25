@@ -5,16 +5,63 @@ readonly CONTAINER_HELPERS_DIR
 
 container_sensitive_failure_class() {
   case "${1:-}" in
-    70) printf '%s\n' 'uid' ;;
-    71) printf '%s\n' 'mount-content' ;;
-    72) printf '%s\n' 'mount-owner' ;;
-    73) printf '%s\n' 'mount-mode' ;;
-    74) printf '%s\n' 'secrets-json' ;;
-    75) printf '%s\n' 'forbidden-mount' ;;
-    76) printf '%s\n' 'environment-leak' ;;
-    124) printf '%s\n' 'timeout' ;;
-    *) printf '%s\n' 'bounded-command' ;;
+    success|uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)
+      printf '%s\n' "$1"
+      ;;
+    *) return 1 ;;
   esac
+}
+
+container_sensitive_marker_class() {
+  local output="${1:-}" candidate
+  [[ -f "$output" ]] || return 1
+  candidate="$(awk '
+    NR == 1 && $0 ~ /^telecrypt-synapse-proof:(success|uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)$/ {
+      class = $0
+      sub(/^telecrypt-synapse-proof:/, "", class)
+      next
+    }
+    { invalid = 1 }
+    END {
+      if (NR == 1 && !invalid) print class
+    }
+  ' "$output" 2>/dev/null)" || return 1
+  container_sensitive_failure_class "$candidate"
+}
+
+container_sensitive_proof_class() {
+  local status="${1:-}" output="${2:-}" stderr_file="${3:-}" marker
+  [[ "$status" =~ ^[0-9]+$ ]] || {
+    printf '%s\n' 'bounded-command'
+    return 0
+  }
+  marker="$(container_sensitive_marker_class "$output" || true)"
+  if (( status != 0 )); then
+    case "$marker" in
+      uid|mount-content|mount-owner|mount-mode|secrets-json|forbidden-mount|environment-leak)
+        container_sensitive_failure_class "$marker"
+        ;;
+      success)
+        if [[ -s "$stderr_file" ]]; then
+          printf '%s\n' 'stderr-diagnostics'
+        else
+          printf '%s\n' 'bounded-command'
+        fi
+        ;;
+      '')
+        if [[ -s "$output" ]]; then
+          printf '%s\n' 'output-contract'
+        else
+          printf '%s\n' 'bounded-command'
+        fi
+        ;;
+      *) printf '%s\n' 'output-contract' ;;
+    esac
+  elif [[ "$marker" == success ]]; then
+    printf '%s\n' 'success'
+  else
+    printf '%s\n' 'output-contract'
+  fi
 }
 
 container_bounded() {

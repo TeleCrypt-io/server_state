@@ -29,8 +29,56 @@ container_sensitive_marker_class() {
   container_sensitive_failure_class "$candidate"
 }
 
+container_sensitive_preflight_failure_class() {
+  case "${1:-}" in
+    image-pull|registry-auth|mount-source|entrypoint-executable|compose-secrets|daemon-resource|timeout)
+      printf '%s\n' "$1"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+container_sensitive_preflight_class() {
+  local stderr_file="${1:-}" candidate
+  [[ -f "$stderr_file" ]] || return 1
+  candidate="$(awk '
+    {
+      line = tolower($0)
+      if (line ~ /timed[[:space:]]+out|timeout|i\/o timeout|deadline exceeded|context deadline/) {
+        print "timeout"
+        exit
+      }
+      if (line ~ /unauthorized|authentication required|authentication failed|pull access denied|denied: requested access|requested access to the resource is denied|insufficient_scope|login required|may require.*docker login/) {
+        print "registry-auth"
+        exit
+      }
+      if (line ~ /manifest unknown|no matching manifest|failed to (resolve|pull|fetch)|failed to copy|image[^[:alnum:]]+not found|repository[^[:alnum:]]+not found/) {
+        print "image-pull"
+        exit
+      }
+      if (line ~ /executable file not found|exec format error|oci runtime create failed.*exec|exec[^[:alnum:]]+.*(not found|no such file)|cannot start service.*exec/) {
+        print "entrypoint-executable"
+        exit
+      }
+      if (line ~ /invalid mount config|mounts denied|bind source path does not exist|source path[^[:alnum:]]+does not exist|mount[^[:alnum:]]+(source|no such file|does not exist)/) {
+        print "mount-source"
+        exit
+      }
+      if (line ~ /secret[^[:alnum:]]+(not found|missing|source|environment|file|mount)|failed to create secret|invalid[^[:alnum:]]+secret|secrets?[^[:alnum:]]+(required|not set)/) {
+        print "compose-secrets"
+        exit
+      }
+      if (line ~ /cannot connect to the docker daemon|is the docker daemon running|error during connect|connection refused|daemon[^[:alnum:]]+(unavailable|not running|error)|no space left on device|resource temporarily unavailable|too many open files|out of memory|quota exceeded|device or resource busy|failed to create[^[:alnum:]]+(container|network|shim task)|network[^[:alnum:]]+(not found|unavailable|error)/) {
+        print "daemon-resource"
+        exit
+      }
+    }
+  ' "$stderr_file" 2>/dev/null)" || return 1
+  container_sensitive_preflight_failure_class "$candidate"
+}
+
 container_sensitive_proof_class() {
-  local status="${1:-}" output="${2:-}" stderr_file="${3:-}" marker
+  local status="${1:-}" output="${2:-}" stderr_file="${3:-}" marker preflight_class
   [[ "$status" =~ ^[0-9]+$ ]] || {
     printf '%s\n' 'bounded-command'
     return 0
@@ -52,7 +100,12 @@ container_sensitive_proof_class() {
         if [[ -s "$output" ]]; then
           printf '%s\n' 'output-contract'
         else
-          printf '%s\n' 'bounded-command'
+          preflight_class="$(container_sensitive_preflight_class "$stderr_file" || true)"
+          if [[ -n "$preflight_class" ]]; then
+            printf '%s\n' "$preflight_class"
+          else
+            printf '%s\n' 'bounded-command'
+          fi
         fi
         ;;
       *) printf '%s\n' 'output-contract' ;;

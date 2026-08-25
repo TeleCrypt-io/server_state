@@ -582,6 +582,72 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(no_marker.stdout, "bounded-command\n")
             self.assertEqual(no_marker.stderr, "")
 
+            preflight_cases = {
+                "Error response from daemon: manifest unknown: private-fixture": "image-pull",
+                "unauthorized: authentication required for ci-secret-fixture": "registry-auth",
+                "invalid mount config for type bind: bind source path does not exist: ci-secret-fixture": "mount-source",
+                'OCI runtime create failed: exec: "python": executable file not found in $PATH ci-secret-fixture': "entrypoint-executable",
+                "failed to create secret ci-secret-fixture: secret not found": "compose-secrets",
+                "Cannot connect to the Docker daemon at unix:///var/run/docker.sock: ci-secret-fixture": "daemon-resource",
+                "bounded command timed out while handling ci-secret-fixture": "timeout",
+            }
+            preflight_file = root / "preflight-stderr"
+            for diagnostic, expected in preflight_cases.items():
+                preflight_file.write_text(diagnostic + "\n", encoding="utf-8")
+                classified = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                        f"container_sensitive_preflight_class {shlex.quote(str(preflight_file))}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(classified.returncode, 0, diagnostic)
+                self.assertEqual(classified.stdout, expected + "\n", diagnostic)
+                self.assertEqual(classified.stderr, "", diagnostic)
+                self.assertNotIn("ci-secret-fixture", classified.stdout + classified.stderr, diagnostic)
+
+                proof_class = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                        f"container_sensitive_proof_class 1 {shlex.quote(str(root / 'missing'))} "
+                        f"{shlex.quote(str(preflight_file))}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(proof_class.returncode, 0, diagnostic)
+                self.assertEqual(proof_class.stdout, expected + "\n", diagnostic)
+                self.assertEqual(proof_class.stderr, "", diagnostic)
+                self.assertNotIn("ci-secret-fixture", proof_class.stdout + proof_class.stderr, diagnostic)
+
+            preflight_file.write_text("private fixture only: ci-secret-fixture\n", encoding="utf-8")
+            unknown_preflight = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_sensitive_proof_class 1 {shlex.quote(str(root / 'missing'))} "
+                    f"{shlex.quote(str(preflight_file))}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(unknown_preflight.returncode, 0)
+            self.assertEqual(unknown_preflight.stdout, "bounded-command\n")
+            self.assertEqual(unknown_preflight.stderr, "")
+            self.assertNotIn("ci-secret-fixture", unknown_preflight.stdout + unknown_preflight.stderr)
+
             output = root / "proof"
             failed = subprocess.run(
                 [

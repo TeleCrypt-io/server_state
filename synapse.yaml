@@ -18,15 +18,10 @@ listeners:
       - names: [client]              # client resource includes client + media APIs; federation disabled
         compress: false
 
-# server_name and public_baseurl: -> in the runtime identity layer
-database:
-  name: psycopg2
-  # args (host/user/database/password + TLS/timeout) -> in synapse.secrets.json
-
-matrix_authentication_service:
-  enabled: true
-  endpoint: http://mas:8080
-  # secret -> in synapse.secrets.json
+# server_name and public_baseurl: -> in the runtime identity layer. The complete database map
+# (driver plus args) and complete matrix_authentication_service map (enabled, endpoint, and secret)
+# are supplied by synapse.secrets.json. Synapse's config files are shallow-merged by top-level key;
+# keeping partial maps here would silently discard required fields from the private map.
 
 # media_storage_providers (external S3 s3.telecrypt.io + private bucket/credentials, storing
 # local uploads synchronously; remote media is disabled) -> synapse.secrets.json

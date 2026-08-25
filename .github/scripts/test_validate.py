@@ -104,19 +104,23 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("mas-synapse", compose)
         self.assertNotRegex(compose, r"(?s)synapse_mas_net:\s*\n\s*gw_priority:\s*1")
 
-    def test_matrix_private_layers_are_json_and_base_owns_nonsecret_options(self) -> None:
+    def test_matrix_private_layers_own_complete_shallow_merged_maps(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         synapse = (Path(__file__).resolve().parents[2] / "synapse.yaml").read_text(encoding="utf-8")
+        synapse_document = yaml.safe_load(synapse)
         mas = (Path(__file__).resolve().parents[2] / "mas.yaml").read_text(encoding="utf-8")
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         mas_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "mas.secrets.json").read_text(encoding="utf-8")
+        synapse_fixture = yaml.safe_load(
+            (Path(__file__).resolve().parents[1] / "fixtures" / "synapse.secrets.json").read_text(encoding="utf-8")
+        )
         signing_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "synapse-signing-fixture.txt").read_text(encoding="utf-8")
         self.assertIn("SYNAPSE_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertIn("MAS_SECRETS_JSON", validate.SECRET_ENV.values())
         self.assertNotIn("secrets.yaml", compose + synapse + mas)
         self.assertIn("target: /secrets.json", compose)
-        self.assertIn("name: psycopg2", synapse)
-        self.assertIn("endpoint: http://mas:8080", synapse)
+        self.assertNotIn("database", synapse_document)
+        self.assertNotIn("matrix_authentication_service", synapse_document)
         self.assertIn("kind: synapse", mas)
         self.assertIn("endpoint: http://synapse:8008", mas)
         self.assertIn("transport: blackhole", mas)
@@ -126,6 +130,16 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("HomeServerConfig", workflow)
         self.assertIn("load_config", workflow)
         self.assertNotIn("loader.read_config", workflow)
+        self.assertIn("shallow-merged by top-level key", synapse)
+        self.assertEqual(synapse_fixture["database"]["name"], "psycopg2")
+        self.assertEqual(
+            set(synapse_fixture["database"]["args"]),
+            {"user", "password", "database", "host", "port", "sslmode", "connect_timeout"},
+        )
+        self.assertEqual(
+            synapse_fixture["matrix_authentication_service"],
+            {"enabled": True, "endpoint": "http://mas:8080", "secret": "ci-matrix-secret"},
+        )
         self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
@@ -739,8 +753,53 @@ class ReleaseEvidenceTests(unittest.TestCase):
         ):
             self.assertIn(f"mas_failure {phase}", workflow)
         self.assertIn('echo "MAS secret proof failed: $1; sensitive diagnostics were withheld"', workflow)
-        for phase in ("container-run", "output-read", "output-contract"):
-            self.assertIn(f"synapse_loader_failure {phase}", workflow)
+        self.assertIn("allowed_config_paths", workflow)
+        self.assertIn("contextlib.redirect_stdout", workflow)
+        self.assertIn("contextlib.redirect_stderr", workflow)
+        self.assertIn("getattr(error, \"path\", None)", workflow)
+        self.assertIn("marker = config_marker(error)", workflow)
+        self.assertIn("except FileNotFoundError", workflow)
+        self.assertIn("except PermissionError", workflow)
+        self.assertIn("except ModuleNotFoundError", workflow)
+        self.assertIn("except ImportError", workflow)
+        self.assertIn("except SystemExit", workflow)
+        self.assertIn("except Exception", workflow)
+        for marker in (
+            "success",
+            "config-server",
+            "config-database",
+            "config-logging",
+            "config-repository",
+            "config-key",
+            "config-media",
+            "config-listeners",
+            "config-unknown",
+            "file-not-found",
+            "permission",
+            "module-import",
+            "parser-exit",
+            "unexpected",
+        ):
+            self.assertIn(f"telecrypt-synapse-loader:{marker}", workflow)
+        self.assertIn("synapse_loader_failure container-diagnostic", workflow)
+        self.assertIn("synapse_loader_failure container-run", workflow)
+        self.assertIn("synapse_loader_failure output-read", workflow)
+        self.assertIn("synapse_loader_failure output-contract", workflow)
+        loader_start = workflow.index("      - name: Verify pinned Synapse JSON config loader")
+        loader_end = workflow.index("Verify exact selected container images", loader_start)
+        loader_block = workflow[loader_start:loader_end]
+        self.assertIn(
+            "          ' >/dev/null; then\n"
+            "            synapse_loader_status=0\n"
+            "          else\n"
+            "            synapse_loader_status=$?\n"
+            "          fi",
+            loader_block,
+        )
+        self.assertNotIn("if ! container_bounded", loader_block)
+        self.assertNotIn("Synapse config loader returned no config", workflow)
+        self.assertNotIn("str(error)", workflow)
+        self.assertNotIn("repr(error)", workflow)
         self.assertIn('echo "Synapse JSON loader proof failed: $1; sensitive diagnostics were withheld"', workflow)
 
         proof_compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "secret-proof.compose.yml").read_text(encoding="utf-8"))

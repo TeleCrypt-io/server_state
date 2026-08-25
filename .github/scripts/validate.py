@@ -419,12 +419,20 @@ def validate_source(values: dict[str, str]) -> None:
         "Synapse listeners/upload/staging",
     )
     check("url_preview_enabled: false" in synapse, "Synapse URL previews disabled")
+    synapse_fixture = json.loads(
+        (ROOT / ".github" / "fixtures" / "synapse.secrets.json").read_text(encoding="utf-8")
+    )
     check(
-        "name: psycopg2" in synapse
-        and "enabled: true" in synapse
-        and "endpoint: http://mas:8080" in synapse
+        not re.search(r"^\s*database:\s*$", synapse, re.MULTILINE)
+        and not re.search(r"^\s*matrix_authentication_service:\s*$", synapse, re.MULTILINE)
+        and "shallow-merged by top-level key" in synapse
+        and synapse_fixture.get("database", {}).get("name") == "psycopg2"
+        and set(synapse_fixture.get("database", {}).get("args", {}))
+        == {"user", "password", "database", "host", "port", "sslmode", "connect_timeout"}
+        and synapse_fixture.get("matrix_authentication_service")
+        == {"enabled": True, "endpoint": "http://mas:8080", "secret": "ci-matrix-secret"}
         and "media_store_path: /staging/media" in synapse,
-        "Synapse committed loader options",
+        "Synapse complete private loader maps",
     )
     check(not re.search(r"^\s*(server_name|public_baseurl):", synapse, re.MULTILINE), "Synapse identity overlay")
     check(

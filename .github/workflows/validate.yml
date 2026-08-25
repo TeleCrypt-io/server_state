@@ -331,30 +331,115 @@ jobs:
             exit 1
           }
           trap synapse_loader_cleanup EXIT
-          if ! container_bounded --sensitive 65536 "$synapse_loader_output" 120 docker compose --ansi never --env-file .env.example \
+          synapse_loader_status=0
+          if container_bounded --sensitive 65536 "$synapse_loader_output" 120 docker compose --ansi never --env-file .env.example \
             -f .github/secret-proof.compose.yml run --rm --no-deps -T \
             --entrypoint python synapse-loader-proof -c '
-          from synapse.config.homeserver import HomeServerConfig
+          import contextlib
+          import io
 
-          config = HomeServerConfig.load_config(
-              "Synapse JSON loader proof",
-              ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
-          )
-          if config is None:
-              raise SystemExit("Synapse config loader returned no config")
-          print("Synapse JSON config loader accepted")
+          allowed_config_paths = {
+              "server",
+              "database",
+              "logging",
+              "repository",
+              "key",
+              "media",
+              "listeners",
+          }
+
+          def config_marker(error):
+              path = getattr(error, "path", None)
+              if isinstance(path, (list, tuple)) and path:
+                  top_level = path[0]
+              elif isinstance(path, str):
+                  top_level = path.split(".", 1)[0]
+              else:
+                  top_level = None
+              if top_level in allowed_config_paths:
+                  return "config-" + top_level
+              return "config-unknown"
+
+          def print_marker(marker):
+              print("telecrypt-synapse-loader:" + marker)
+
+          class LoaderFailure(Exception):
+              pass
+
+          marker = "unexpected"
+          try:
+              with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                  from synapse.config._base import ConfigError
+                  from synapse.config.homeserver import HomeServerConfig
+                  try:
+                      config = HomeServerConfig.load_config(
+                          "Synapse JSON loader proof",
+                          ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
+                      )
+                      if config is None:
+                          raise LoaderFailure
+                      marker = "success"
+                  except ConfigError as error:
+                      marker = config_marker(error)
+                  except FileNotFoundError:
+                      marker = "file-not-found"
+                  except PermissionError:
+                      marker = "permission"
+                  except ModuleNotFoundError:
+                      marker = "module-import"
+                  except ImportError:
+                      marker = "module-import"
+                  except SystemExit:
+                      marker = "parser-exit"
+                  except LoaderFailure:
+                      marker = "unexpected"
+                  except Exception:
+                      marker = "unexpected"
+          except ModuleNotFoundError:
+              marker = "module-import"
+          except ImportError:
+              marker = "module-import"
+          except SystemExit:
+              marker = "parser-exit"
+          except Exception:
+              marker = "unexpected"
+
+          print_marker(marker)
+          if marker != "success":
+              raise SystemExit(1)
           ' >/dev/null; then
-            synapse_loader_failure container-run
+            synapse_loader_status=0
+          else
+            synapse_loader_status=$?
           fi
-          if ! synapse_loader_marker="$(tail -n 1 "$synapse_loader_output")"; then
+          if ! synapse_loader_marker="$(cat -- "$synapse_loader_output")"; then
             synapse_loader_failure output-read
           fi
-          if [[ "$synapse_loader_marker" != "Synapse JSON config loader accepted" ]]; then
-            synapse_loader_failure output-contract
+          if [[ -z "$synapse_loader_marker" && "$synapse_loader_status" -ne 0 ]]; then
+            synapse_loader_failure container-run
           fi
-          trap - EXIT
-          synapse_loader_cleanup
-          echo 'Synapse JSON config loader accepted'
+          case "$synapse_loader_marker" in
+            telecrypt-synapse-loader:success)
+              if [[ "$synapse_loader_status" -ne 0 ]]; then
+                synapse_loader_failure container-diagnostic
+              fi
+              trap - EXIT
+              synapse_loader_cleanup
+              echo 'Synapse JSON config loader accepted'
+              ;;
+            telecrypt-synapse-loader:config-server|telecrypt-synapse-loader:config-database|\
+            telecrypt-synapse-loader:config-logging|telecrypt-synapse-loader:config-repository|\
+            telecrypt-synapse-loader:config-key|telecrypt-synapse-loader:config-media|\
+            telecrypt-synapse-loader:config-listeners|telecrypt-synapse-loader:config-unknown|\
+            telecrypt-synapse-loader:file-not-found|telecrypt-synapse-loader:permission|\
+            telecrypt-synapse-loader:module-import|telecrypt-synapse-loader:parser-exit|\
+            telecrypt-synapse-loader:unexpected)
+              synapse_loader_failure "${synapse_loader_marker#telecrypt-synapse-loader:}"
+              ;;
+            *)
+              synapse_loader_failure output-contract
+              ;;
+          esac
 
       - name: Verify exact selected container images
         run: |

@@ -31,7 +31,7 @@ container_sensitive_marker_class() {
 
 container_sensitive_preflight_failure_class() {
   case "${1:-}" in
-    image-pull|registry-auth|mount-source|entrypoint-executable|compose-secrets|daemon-resource|timeout)
+    image-pull|registry-auth|mount-source|entrypoint-executable|compose-secrets|compose-config|runtime-permission|file-shape|oci-runtime|daemon-resource|timeout|container-runtime)
       printf '%s\n' "$1"
       ;;
     *) return 1 ;;
@@ -52,6 +52,10 @@ container_sensitive_preflight_class() {
         print "registry-auth"
         exit
       }
+      if (line ~ /required variable[^[:alnum:]]+.*(not set|is required|missing|empty)|variable[^[:alnum:]]+.*(not set|is required|missing|empty)|interpolation|invalid compose (file|configuration)|compose[^[:alnum:]]+(config|file)[^[:alnum:]]+.*(invalid|failed|error)|additional property.*(not allowed|is required)|refers to undefined|external[^[:alnum:]]+.*could not be found/) {
+        print "compose-config"
+        exit
+      }
       if (line ~ /manifest unknown|no matching manifest|failed to (resolve|pull|fetch)|failed to copy|image[^[:alnum:]]+not found|repository[^[:alnum:]]+not found/) {
         print "image-pull"
         exit
@@ -68,13 +72,31 @@ container_sensitive_preflight_class() {
         print "compose-secrets"
         exit
       }
+      if (line ~ /permission denied|operation not permitted|operation not allowed|read-only file system|access denied/) {
+        print "runtime-permission"
+        exit
+      }
+      if (line ~ /not a directory|is a directory|no such file or directory|not a file|expected (a )?(file|directory)/) {
+        print "file-shape"
+        exit
+      }
+      if (line ~ /oci runtime|runc|failed to create (a )?(shim )?task|failed to start (the )?container|failed to initialize|container process|failed to mount|mount[^[:alnum:]]+failed/) {
+        print "oci-runtime"
+        exit
+      }
       if (line ~ /cannot connect to the docker daemon|is the docker daemon running|error during connect|connection refused|daemon[^[:alnum:]]+(unavailable|not running|error)|no space left on device|resource temporarily unavailable|too many open files|out of memory|quota exceeded|device or resource busy|failed to create[^[:alnum:]]+(container|network|shim task)|network[^[:alnum:]]+(not found|unavailable|error)/) {
         print "daemon-resource"
         exit
       }
     }
   ' "$stderr_file" 2>/dev/null)" || return 1
-  container_sensitive_preflight_failure_class "$candidate"
+  if [[ -n "$candidate" ]]; then
+    container_sensitive_preflight_failure_class "$candidate"
+  elif [[ -s "$stderr_file" ]]; then
+    printf '%s\n' 'container-runtime'
+  else
+    return 1
+  fi
 }
 
 container_sensitive_proof_class() {

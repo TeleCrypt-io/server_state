@@ -579,7 +579,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(no_marker.returncode, 0)
-            self.assertEqual(no_marker.stdout, "bounded-command\n")
+            self.assertEqual(no_marker.stdout, "container-runtime\n")
             self.assertEqual(no_marker.stderr, "")
 
             preflight_cases = {
@@ -588,6 +588,13 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 "invalid mount config for type bind: bind source path does not exist: ci-secret-fixture": "mount-source",
                 'OCI runtime create failed: exec: "python": executable file not found in $PATH ci-secret-fixture': "entrypoint-executable",
                 "failed to create secret ci-secret-fixture: secret not found": "compose-secrets",
+                "required variable SYNAPSE_SECRETS_JSON is not set: ci-secret-fixture": "compose-config",
+                "permission denied while opening ci-secret-fixture": "runtime-permission",
+                "operation not permitted while opening ci-secret-fixture": "runtime-permission",
+                "read-only file system while opening ci-secret-fixture": "runtime-permission",
+                "not a directory: ci-secret-fixture": "file-shape",
+                "no such file or directory: ci-secret-fixture": "file-shape",
+                "OCI runtime create failed while mounting ci-secret-fixture": "oci-runtime",
                 "Cannot connect to the Docker daemon at unix:///var/run/docker.sock: ci-secret-fixture": "daemon-resource",
                 "bounded command timed out while handling ci-secret-fixture": "timeout",
             }
@@ -630,6 +637,25 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 self.assertNotIn("ci-secret-fixture", proof_class.stdout + proof_class.stderr, diagnostic)
 
             preflight_file.write_text("private fixture only: ci-secret-fixture\n", encoding="utf-8")
+            generic_preflight = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_sensitive_proof_class 1 {shlex.quote(str(root / 'missing'))} "
+                    f"{shlex.quote(str(preflight_file))}",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(generic_preflight.returncode, 0)
+            self.assertEqual(generic_preflight.stdout, "container-runtime\n")
+            self.assertEqual(generic_preflight.stderr, "")
+            self.assertNotIn("ci-secret-fixture", generic_preflight.stdout + generic_preflight.stderr)
+
+            preflight_file.write_text("", encoding="utf-8")
             unknown_preflight = subprocess.run(
                 [
                     "/bin/bash",
@@ -646,7 +672,6 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(unknown_preflight.returncode, 0)
             self.assertEqual(unknown_preflight.stdout, "bounded-command\n")
             self.assertEqual(unknown_preflight.stderr, "")
-            self.assertNotIn("ci-secret-fixture", unknown_preflight.stdout + unknown_preflight.stderr)
 
             output = root / "proof"
             failed = subprocess.run(

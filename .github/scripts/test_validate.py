@@ -449,6 +449,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
     def test_stdin_inheritance_is_reserved_for_registry_login(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn('authdir="$(mktemp -d)"', workflow)
+        self.assertIn('authfile="$authdir/auth.json"', workflow)
+        self.assertIn('rm -rf "$authdir" "$metadata_dir" "$manifest_path"', workflow)
+        self.assertNotIn('authfile="$(mktemp)"', workflow)
         self.assertEqual(workflow.count("container_bounded --sensitive --inherit-stdin"), 1)
         login_start = workflow.index("container_bounded --sensitive --inherit-stdin")
         login_end = workflow.index("\n", login_start)
@@ -465,6 +469,63 @@ class ReleaseEvidenceTests(unittest.TestCase):
         final_registry_check = workflow.rindex("verify_registry_digests")
         self.assertLess(final_token_unset, final_registry_check)
         self.assertIn("unset registry_token", workflow[final_registry_check:])
+
+    def test_registry_login_uses_missing_authfile_and_password_stdin(self) -> None:
+        """The login path must let Skopeo create its JSON auth file, without leaking the token."""
+        helper = CONTAINER_HELPER
+        with tempfile.TemporaryDirectory(prefix="server-state-skopeo-login-") as directory:
+            root = Path(directory)
+            fake_skopeo = root / "skopeo"
+            fake_skopeo.write_text(
+                "#!/bin/sh\n"
+                "set -eu\n"
+                "[ \"${1:-}\" = login ]\n"
+                "shift\n"
+                "authfile=\n"
+                "while [ $# -gt 0 ]; do\n"
+                "  case \"$1\" in\n"
+                "    --authfile) authfile=$2; shift 2 ;;\n"
+                "    *) shift ;;\n"
+                "  esac\n"
+                "done\n"
+                "[ -n \"$authfile\" ]\n"
+                "[ ! -e \"$authfile\" ]\n"
+                "printf '%s' absent > \"$AUTHFILE_STATE\"\n"
+                "token=$(cat)\n"
+                "printf '%s' \"$token\" > \"$TOKEN_CAPTURE\"\n"
+                "printf '%s' '{\"auths\":{\"ghcr.io\":{\"auth\":\"offline\"}}}' > \"$authfile\"\n",
+                encoding="utf-8",
+            )
+            fake_skopeo.chmod(0o755)
+            authfile_state = root / "authfile-state"
+            token_capture = root / "token-capture"
+            login_output = root / "login.stdout"
+            command = (
+                f"source {shlex.quote(str(helper))}; "
+                f"export PATH={shlex.quote(str(root))}:$PATH; "
+                "authdir=\"$(mktemp -d)\"; "
+                "authfile=\"$authdir/auth.json\"; "
+                "cleanup() { rm -rf \"$authdir\"; }; trap cleanup EXIT; "
+                "registry_token='offline-registry-token'; "
+                f"AUTHFILE_STATE={shlex.quote(str(authfile_state))} "
+                f"TOKEN_CAPTURE={shlex.quote(str(token_capture))} "
+                f"export AUTHFILE_STATE TOKEN_CAPTURE; "
+                f"printf '%s' \"$registry_token\" | container_bounded --sensitive --inherit-stdin 65536 "
+                f"{shlex.quote(str(login_output))} 30 skopeo login --authfile \"$authfile\" "
+                "--username actor --password-stdin ghcr.io"
+            )
+            result = subprocess.run(
+                ["/bin/bash", "-c", command],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(authfile_state.read_text(encoding="utf-8"), "absent")
+            self.assertEqual(token_capture.read_text(encoding="utf-8"), "offline-registry-token")
+            self.assertNotIn("offline-registry-token", result.stdout + result.stderr)
 
     def test_secret_bearing_compose_inspection_is_non_emitting(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")

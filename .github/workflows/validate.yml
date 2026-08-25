@@ -516,11 +516,12 @@ jobs:
         run: |
           set -euo pipefail
           source .github/scripts/container-helpers.sh
-          authfile="$(mktemp)"
+          authdir="$(mktemp -d)"
+          authfile="$authdir/auth.json"
           metadata_dir="$(mktemp -d)"
           manifest_name="server-state-${GITHUB_REF_NAME#server-state-}-images.json"
           manifest_path="$RUNNER_TEMP/$manifest_name"
-          cleanup() { rm -f "$authfile"; rm -rf "$metadata_dir" "$manifest_path"; }
+          cleanup() { rm -rf "$authdir" "$metadata_dir" "$manifest_path"; }
           trap cleanup EXIT
 
           bounded_output() {

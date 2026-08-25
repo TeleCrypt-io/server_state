@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,7 @@ import validate  # noqa: E402
 
 
 HELPER = Path(__file__).parent / "git_transport.sh"
+CONTAINER_HELPER = Path(__file__).parent / "container-helpers.sh"
 
 
 def git(root: Path, *args: str) -> str:
@@ -158,6 +161,7 @@ class ManifestTests(unittest.TestCase):
                 validate.version_tuple(value, "version")
 
     def test_image_platform_and_provenance_are_bound(self) -> None:
+        controlplane_version = validate.load_manifest()["CONTROLPLANE_IMAGE"].rsplit(":", 1)[1]
         validate.validate_image_platform(
             {"Os": "linux", "Architecture": "amd64", "Digest": "sha256:" + "a" * 64},
             {"os": "linux", "architecture": "amd64"},
@@ -168,12 +172,12 @@ class ManifestTests(unittest.TestCase):
             "org.opencontainers.image.version": "1.159-tc3",
             "org.opencontainers.image.base.name": "ghcr.io/element-hq/synapse",
             "org.opencontainers.image.base.version": "1.159.0",
-            "org.telecrypt.controlplane.release": "0.4.0",
+            "org.telecrypt.controlplane.release": controlplane_version,
             "org.telecrypt.s3-provider.version": "1.7.0",
             "org.telecrypt.controlplane.wheel.sha256": "a" * 64,
             "org.telecrypt.s3-provider.archive.sha256": "b" * 64,
         }
-        validate.validate_synapse_provenance(labels, dict(labels), "1.159-tc3", "0.4.0")
+        validate.validate_synapse_provenance(labels, dict(labels), "1.159-tc3", controlplane_version)
         with self.assertRaises(AssertionError):
             validate.validate_image_platform(
                 {"Os": "linux", "Architecture": "arm64"},
@@ -182,7 +186,7 @@ class ManifestTests(unittest.TestCase):
         changed = dict(labels)
         changed["org.telecrypt.controlplane.release"] = "latest"
         with self.assertRaises(AssertionError):
-            validate.validate_synapse_provenance(labels, changed, "1.159-tc3", "0.4.0")
+            validate.validate_synapse_provenance(labels, changed, "1.159-tc3", controlplane_version)
 
 
 class CaddyRouteTests(unittest.TestCase):
@@ -216,6 +220,16 @@ class CaddyRouteTests(unittest.TestCase):
 
 
 class GitTransportTests(unittest.TestCase):
+    def test_transport_retains_the_runner_system_ca_store(self) -> None:
+        helper = HELPER.read_text(encoding="utf-8")
+        self.assertIn("-c http.sslVerify=true", helper)
+        self.assertIn("GIT_SSL_CAINFO", helper)
+        self.assertIn("GIT_SSL_CAPATH", helper)
+        self.assertNotIn("-c http.sslCAInfo=", helper)
+        self.assertNotIn("-c http.sslCAPath=", helper)
+        self.assertNotIn("-c http.sslCert=", helper)
+        self.assertNotIn("-c http.sslKey=", helper)
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory(prefix="server-state-git-")
         self.root = Path(self.directory.name)
@@ -316,6 +330,146 @@ class GitTransportTests(unittest.TestCase):
 
 
 class ReleaseEvidenceTests(unittest.TestCase):
+    def test_container_commands_use_the_step_scoped_diagnostics_classifier(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        lines = workflow.splitlines()
+        blocks: list[list[str]] = []
+        block: list[str] = []
+        for line in lines:
+            if line.startswith("      - "):
+                if block:
+                    blocks.append(block)
+                block = [line]
+            elif block:
+                block.append(line)
+        if block:
+            blocks.append(block)
+        command_pattern = re.compile(r"\b(?:docker|skopeo)\s+")
+        invocation_count = 0
+        for block in blocks:
+            for index, line in enumerate(block):
+                if not command_pattern.search(line):
+                    continue
+                if line.lstrip().startswith("uses: "):
+                    continue
+                invocation_count += 1
+                start = index
+                while start and block[start - 1].rstrip().endswith("\\"):
+                    start -= 1
+                self.assertTrue(
+                    any("source .github/scripts/container-helpers.sh" in prior for prior in block[: index + 1]),
+                    block[0],
+                )
+                self.assertIn("container_bounded", "\n".join(block[start : index + 1]), line)
+        self.assertGreater(invocation_count, 0)
+        self.assertNotRegex(
+            workflow,
+            r"run_bounded_combined\.sh[^\n]*(?:\bdocker\b|\bskopeo\b)",
+        )
+
+    def test_stdin_inheritance_is_reserved_for_registry_login(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("container_bounded --sensitive --inherit-stdin"), 1)
+        login_start = workflow.index("container_bounded --sensitive --inherit-stdin")
+        login_end = workflow.index("\n", login_start)
+        login_line = workflow[login_start:login_end]
+        self.assertIn("skopeo login", login_line)
+        self.assertIn("--password-stdin", workflow[login_start : workflow.index("ghcr.io; then", login_start)])
+        token_copy = workflow.index('registry_token="$GH_TOKEN"')
+        token_unset = workflow.index("unset GH_TOKEN", token_copy)
+        self.assertLess(token_unset, login_start)
+        token_restore = workflow.index('export GH_TOKEN="$registry_token"', login_start)
+        first_api = workflow.index("gh api --include", token_restore)
+        self.assertLess(token_restore, first_api)
+        final_token_unset = workflow.rindex("unset GH_TOKEN")
+        final_registry_check = workflow.rindex("verify_registry_digests")
+        self.assertLess(final_token_unset, final_registry_check)
+        self.assertIn("unset registry_token", workflow[final_registry_check:])
+
+    def test_secret_bearing_compose_inspection_is_non_emitting(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn('container_bounded --sensitive 1048576 "$rendered_compose"', workflow)
+        self.assertIn('container_bounded --sensitive 65536 "$raw_images_file"', workflow)
+        self.assertIn('container_bounded --sensitive 65536 "$image_list"', workflow)
+
+    def test_container_diagnostics_accept_progress_and_reject_hostile_markers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="server-state-container-diagnostics-") as directory:
+            root = Path(directory)
+
+            def run(
+                code: str,
+                max_bytes: int = 65536,
+                timeout: int = 10,
+                *,
+                sensitive: bool = False,
+            ) -> subprocess.CompletedProcess[str]:
+                output = root / "output"
+                option = "--sensitive " if sensitive else ""
+                command = (
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_bounded {option}{max_bytes} {shlex.quote(str(output))} {timeout} "
+                    f"/usr/bin/python3 -c {shlex.quote(code)}"
+                )
+                return subprocess.run(
+                    ["/bin/bash", "-c", command],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    timeout=12,
+                    check=False,
+                )
+
+            progress = run("import sys; sys.stdout.write('digest\\n'); sys.stderr.write('progress: exporting layers\\n')")
+            self.assertEqual(progress.returncode, 0, progress.stderr)
+            self.assertEqual(progress.stdout, "digest\n")
+            self.assertIn("progress: exporting layers", progress.stderr)
+            self.assertNotIn("failure diagnostics", progress.stderr)
+
+            for marker in ("warning", "WARN", "error", "fatal", "failure", "denied", "unauthorized"):
+                result = run(f"import sys; sys.stdout.write('partial\\n'); sys.stderr.write('{marker}: hostile fixture\\n')")
+                self.assertEqual(result.returncode, 1, marker)
+                self.assertEqual(result.stdout, "partial\n", marker)
+                self.assertIn("hostile fixture", result.stderr, marker)
+                self.assertIn("failure diagnostics", result.stderr, marker)
+
+            boundary = run("import sys; sys.stderr.write('warningish error_code\\n')")
+            self.assertEqual(boundary.returncode, 0, boundary.stderr)
+            self.assertNotIn("failure diagnostics", boundary.stderr)
+
+            sensitive = run(
+                "import sys; sys.stdout.write('private stdout\\n'); "
+                "sys.stderr.write('warning: private stderr\\n')",
+                sensitive=True,
+            )
+            self.assertEqual(sensitive.returncode, 1)
+            self.assertNotIn("private", sensitive.stdout + sensitive.stderr)
+
+            failed = run("import sys; sys.stdout.write('partial\\n'); sys.stderr.write('ordinary diagnostic\\n'); raise SystemExit(17)")
+            self.assertEqual(failed.returncode, 17, failed.stderr)
+            self.assertIn("ordinary diagnostic", failed.stderr)
+
+            overflow = run("import sys; sys.stderr.write('x' * 70000)", max_bytes=1024)
+            self.assertNotEqual(overflow.returncode, 0)
+            self.assertIn("bounded command output exceeded its limit", overflow.stderr)
+
+            timed_out = run("import time; time.sleep(60)", timeout=1)
+            self.assertEqual(timed_out.returncode, 124, timed_out.stderr)
+            self.assertIn("bounded command timed out", timed_out.stderr)
+
+    def test_secret_proof_cleanup_and_value_reads_preserve_failures(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn("trap cleanup_on_exit EXIT", workflow)
+        self.assertIn("if ! cleanup; then", workflow)
+        self.assertNotIn(
+            'docker rm -f "$mas_container" "$missing_container" >/dev/null || true',
+            workflow,
+        )
+        bounded_value_start = workflow.index("bounded_docker_value()")
+        bounded_value_end = workflow.index("\n          }", bounded_value_start)
+        bounded_value = workflow[bounded_value_start:bounded_value_end]
+        self.assertIn("if container_bounded", bounded_value)
+        self.assertIn('return "$status"', bounded_value)
+
     def test_product_tag_evidence_binds_exact_api_urls(self) -> None:
         key = "CASHIER_IMAGE"
         tag = validate.load_manifest()[key].rsplit(":", 1)[1]
@@ -368,6 +522,8 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("bounded_gh", workflow)
         self.assertIn("bounded-command.py", Path(__file__).with_name("run_bounded_combined.sh").read_text(encoding="utf-8"))
         self.assertNotRegex(workflow, r"grep -Eiq '.*404")
+        self.assertEqual(workflow.count('.label == ""'), 2)
+        self.assertNotIn(".label == null", workflow)
 
     def test_release_workflow_discovers_complete_unique_draft_by_numeric_id(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
@@ -437,6 +593,61 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8").strip(), "ok")
             self.assertEqual((root / "work.bin").stat().st_size, 131072)
 
+    def test_bounded_container_explicit_stdin_inheritance_is_secret_safe(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="server-state-stdin-") as directory:
+            root = Path(directory)
+            output = root / "output"
+            secret = "offline-fixture-secret\n"
+            child = (
+                "import sys; value=sys.stdin.read(); "
+                "assert value == 'offline-fixture-secret\\n'; "
+                "sys.stdout.write(value); sys.stderr.write(value)"
+            )
+            command = (
+                f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                f"container_bounded --sensitive --inherit-stdin 1024 {shlex.quote(str(output))} 10 "
+                f"/usr/bin/python3 -c {shlex.quote(child)}"
+            )
+            result = subprocess.run(
+                ["/bin/bash", "-c", command],
+                cwd=root,
+                input=secret,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            transcript = result.stdout + result.stderr
+            self.assertNotIn(secret, transcript)
+            self.assertEqual(output.read_text(encoding="utf-8"), secret)
+            self.assertEqual(Path(f"{output}.stderr").read_text(encoding="utf-8"), secret)
+
+    def test_bounded_container_keeps_stdin_closed_by_default(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="server-state-stdin-closed-") as directory:
+            root = Path(directory)
+            output = root / "output"
+            secret = "offline-secret-must-not-reach-child\n"
+            child = "import sys; assert sys.stdin.read() == ''; print('stdin closed')"
+            command = (
+                f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                f"container_bounded 1024 {shlex.quote(str(output))} 10 "
+                f"/usr/bin/python3 -c {shlex.quote(child)}"
+            )
+            result = subprocess.run(
+                ["/bin/bash", "-c", command],
+                cwd=root,
+                input=secret,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            transcript = result.stdout + result.stderr + output.read_text(encoding="utf-8")
+            self.assertIn("stdin closed", transcript)
+            self.assertNotIn(secret, transcript)
+
     def test_bounded_combined_enforces_one_aggregate_limit(self) -> None:
         script = Path(__file__).parent / "run_bounded_combined.sh"
         with tempfile.TemporaryDirectory(prefix="server-state-combined- bound-") as directory:
@@ -456,7 +667,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             result = subprocess.run(
                 ["/bin/bash", str(script), "--max-bytes", "1024", str(output),
                  "/usr/bin/python3", "-c",
-                 "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); print('leader')"],
+                 "import os, subprocess, sys; descendant=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); print('leader'); sys.stdout.flush(); os._exit(0)"],
                 capture_output=True, text=True, timeout=10, check=False,
             )
             self.assertEqual(result.returncode, 0, result.stderr)

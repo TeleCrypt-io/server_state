@@ -7,7 +7,8 @@ set -euo pipefail
 readonly GIT=/usr/bin/git
 readonly REPOSITORY='TeleCrypt-io/server_state'
 readonly REMOTE='https://github.com/TeleCrypt-io/server_state.git'
-readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 
 die() { printf 'git transport refused: %s\n' "$1" >&2; exit 64; }
 
@@ -46,10 +47,6 @@ readonly GIT_OPTIONS=(
   -c credential.interactive=false
   -c http.proxy=
   -c http.sslVerify=true
-  -c http.sslCAInfo=
-  -c http.sslCAPath=
-  -c http.sslCert=
-  -c http.sslKey=
   -c core.sshCommand=
   -c core.gitproxy=
   -c core.hooksPath=/dev/null

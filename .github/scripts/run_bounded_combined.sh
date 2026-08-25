@@ -4,6 +4,11 @@ set -euo pipefail
 mode=combined
 max_bytes=65536
 timeout_seconds=180
+inherit_stdin=false
+if [[ "${1:-}" == "--inherit-stdin" ]]; then
+  inherit_stdin=true
+  shift
+fi
 if [[ "${1:-}" == "--separate" ]]; then
   mode=separate
   max_stdout="${2:?maximum stdout bytes are required}"
@@ -38,18 +43,21 @@ cleanup() { rm -rf -- "$temporary"; }
 trap cleanup EXIT
 trap 'cleanup; exit 143' HUP INT TERM
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+python_args=(
+  --stdout-limit "$max_stdout" --stderr-limit "$max_stderr"
+  --stdout-path "$temporary/stdout" --stderr-path "$temporary/stderr"
+  --timeout "$timeout_seconds"
+)
+if [[ "$inherit_stdin" == true ]]; then
+  python_args+=(--inherit-stdin)
+fi
 set +e
 if [[ "$mode" == separate ]]; then
-  /usr/bin/python3 "$script_dir/bounded-command.py" \
-    --stdout-limit "$max_stdout" --stderr-limit "$max_stderr" \
-    --stdout-path "$temporary/stdout" --stderr-path "$temporary/stderr" \
-    --timeout "$timeout_seconds" -- "$@"
+  /usr/bin/python3 "$script_dir/bounded-command.py" "${python_args[@]}" -- "$@"
   status=$?
 else
-  /usr/bin/python3 "$script_dir/bounded-command.py" \
-    --stdout-limit "$max_bytes" --stderr-limit "$max_bytes" \
-    --stdout-path "$temporary/stdout" --stderr-path "$temporary/stderr" \
-    --combined-limit "$max_bytes" --timeout "$timeout_seconds" -- "$@"
+  python_args+=(--combined-limit "$max_bytes")
+  /usr/bin/python3 "$script_dir/bounded-command.py" "${python_args[@]}" -- "$@"
   status=$?
 fi
 set -e

@@ -28,6 +28,11 @@ def main() -> int:
     parser.add_argument("--stderr-path", type=Path, required=True)
     parser.add_argument("--timeout", type=float, required=True)
     parser.add_argument("--combined-limit", type=int)
+    parser.add_argument(
+        "--inherit-stdin",
+        action="store_true",
+        help="inherit stdin explicitly; otherwise the child receives EOF",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if (
@@ -52,7 +57,7 @@ def main() -> int:
     timed_out = False
     process = subprocess.Popen(
         command,
-        stdin=subprocess.DEVNULL,
+        stdin=None if args.inherit_stdin else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,

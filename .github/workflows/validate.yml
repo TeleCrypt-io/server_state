@@ -472,6 +472,7 @@ jobs:
             --read-only \
             --security-opt no-new-privileges:true \
             --cap-drop ALL \
+            --cap-add NET_BIND_SERVICE \
             --network none \
             --tmpfs /config/caddy:uid=65532,gid=65532,mode=0700 \
             --tmpfs /data/caddy:uid=65532,gid=65532,mode=0700 \

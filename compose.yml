@@ -31,6 +31,10 @@ services:
       edge_cashier_net:
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    # The official image's Caddy executable carries NET_BIND_SERVICE as a file capability.
+    # Retain only that exact in-container capability so it can execute under cap_drop ALL;
+    # it does not grant host-level port authority and is not given to any other service.
+    cap_add: ["NET_BIND_SERVICE"]
     read_only: true
     user: "65532:65532"
     tmpfs:

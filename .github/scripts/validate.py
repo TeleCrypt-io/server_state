@@ -117,7 +117,7 @@ EXPECTED_DEPENDS_ON = {
     "janitor": {"mas": "service_healthy", "cashier": "service_healthy"},
     "plan": {"mas": "service_started"}, "mas": {}, "cashier": {},
 }
-FORBIDDEN_SERVICE_KEYS = {"privileged", "cap_add", "network_mode", "pid", "ipc", "devices", "runtime", "device_cgroup_rules", "userns_mode", "uts", "cgroup", "cgroup_parent", "sysctls", "extra_hosts"}
+FORBIDDEN_SERVICE_KEYS = {"privileged", "network_mode", "pid", "ipc", "devices", "runtime", "device_cgroup_rules", "userns_mode", "uts", "cgroup", "cgroup_parent", "sysctls", "extra_hosts"}
 MIN_DOCKER_ENGINE = (28, 0, 0)
 MIN_COMPOSE = (2, 33, 1)
 
@@ -125,6 +125,14 @@ MIN_COMPOSE = (2, 33, 1)
 def check(condition: object, message: object) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def validate_service_capabilities(service: str, settings: dict) -> None:
+    check(settings.get("cap_drop") == ["ALL"], (service, "cap_drop"))
+    if service == "caddy":
+        check(settings.get("cap_add") == ["NET_BIND_SERVICE"], (service, "cap_add"))
+    else:
+        check("cap_add" not in settings, (service, "cap_add"))
 
 
 def assignments(text: str) -> dict[str, str]:
@@ -365,8 +373,10 @@ def validate_source(values: dict[str, str]) -> None:
     check("build:" not in compose, "local builds")
     check("container_name:" not in compose, "global container names")
     check("synapse/media_store" not in workflow, "legacy persistent media path")
-    for forbidden in ("privileged:", "cap_add:", "network_mode:", "pid:", "ipc:", "devices:", "/var/run/docker.sock"):
+    for forbidden in ("privileged:", "network_mode:", "pid:", "ipc:", "devices:", "/var/run/docker.sock"):
         check(forbidden not in compose, forbidden)
+    check('cap_add: ["NET_BIND_SERVICE"]' in sections["caddy"], "Caddy execution capability")
+    check(all("cap_add:" not in sections[service] for service in SERVICES if service != "caddy"), "non-Caddy capabilities")
     check("ports:" in sections["caddy"] and all("ports:" not in sections[s] for s in SERVICES if s != "caddy"), "listener ownership")
     check("env_file:" not in compose, "live env files")
     check("secrets:" not in sections["caddy"], "Caddy credentials")
@@ -523,7 +533,8 @@ def validate_rendered(path: Path) -> None:
         settings = services[service]
         check(settings.get("image") == manifest[SERVICE_IMAGES[service]], (service, "image"))
         check("container_name" not in settings, (service, "global container name"))
-        check("build" not in settings and settings.get("read_only") is True and settings.get("cap_drop") == ["ALL"], (service, "immutable runtime"))
+        check("build" not in settings and settings.get("read_only") is True, (service, "immutable runtime"))
+        validate_service_capabilities(service, settings)
         check(settings.get("security_opt") == ["no-new-privileges:true"], (service, "privilege boundary"))
         check(settings.get("user") == ("65532:65532" if service == "caddy" else "991:991"), (service, "uid"))
         check(not set(settings) & FORBIDDEN_SERVICE_KEYS, (service, "forbidden runtime"))

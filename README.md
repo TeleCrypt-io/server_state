@@ -59,10 +59,13 @@ only; it cannot prove that either listener is accepting connections. Janitor is 
 from the default Compose start. Harness checks OIDC discovery and Plan readiness before starting the
 one-shot `janitor` profile against the active exact state, without recreating or restarting MAS and
 with the equivalent of Compose `--no-deps`.
-Every service runs as its image-supported non-root UID/GID with no new privileges and all Linux
-capabilities dropped. Each root filesystem is read-only; only Caddy's two private temporary
-directories, Synapse's UID-991 `/tmp`, and Synapse's disposable staging/cache mount are writable. Only
-Caddy publishes the unprivileged 8080 ingress port. It reaches each routed upstream through a
+Every service runs as its image-supported non-root UID/GID with no new privileges and drops Docker's
+full default capability set. The official Caddy executable carries a `NET_BIND_SERVICE` file
+capability, so Caddy alone adds back that exact capability inside its container to execute the image;
+it grants no host privilege, and every other service remains capability-free. Each root filesystem
+is read-only; only Caddy's two private temporary directories, Synapse's UID-991 `/tmp`, and
+Synapse's disposable staging/cache mount are writable. Only Caddy publishes the unprivileged 8080
+ingress port. It reaches each routed upstream through a
 dedicated internal edge network; Synapse and MAS share only their required peer network, Plan shares
 only its MAS and Cashier peer networks, Synapse and MAS share only the internal `synapse_mas_net` peer
 network (retaining Compose service DNS) and use separate non-internal `synapse_egress_net` and

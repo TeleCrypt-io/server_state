@@ -175,6 +175,31 @@ class ManifestTests(unittest.TestCase):
             },
         )
 
+    def test_caddy_capability_exception_is_exact_and_non_caddy_stays_capability_free(self) -> None:
+        compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))
+        services = compose["services"]
+        self.assertEqual(services["caddy"]["cap_drop"], ["ALL"])
+        self.assertEqual(services["caddy"]["cap_add"], ["NET_BIND_SERVICE"])
+        validate.validate_service_capabilities("caddy", services["caddy"])
+        with self.assertRaises(AssertionError):
+            validate.validate_service_capabilities(
+                "caddy", {**services["caddy"], "cap_add": ["NET_ADMIN"]}
+            )
+        with self.assertRaises(AssertionError):
+            validate.validate_service_capabilities("caddy", {key: value for key, value in services["caddy"].items() if key != "cap_add"})
+        for service, settings in services.items():
+            if service == "caddy":
+                continue
+            self.assertNotIn("cap_add", settings)
+            validate.validate_service_capabilities(service, settings)
+            with self.assertRaises(AssertionError):
+                validate.validate_service_capabilities(
+                    service, {**settings, "cap_add": ["NET_ADMIN"]}
+                )
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        caddy_step = workflow[workflow.index("      - name: Validate Caddy"):workflow.index("\n  release:", workflow.index("      - name: Validate Caddy"))]
+        self.assertIn("--cap-drop ALL \\\n            --cap-add NET_BIND_SERVICE", caddy_step)
+
     def test_manifest_has_exactly_five_versioned_images(self) -> None:
         values = validate.load_manifest()
         self.assertEqual(set(values), set(validate.IMAGE_KEYS))

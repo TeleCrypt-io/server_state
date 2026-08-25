@@ -150,6 +150,7 @@ jobs:
           set -euo pipefail
           source .github/scripts/container-helpers.sh
           mkdir -p "$TELECRYPT_DATA_DIR/runtime"
+          mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"

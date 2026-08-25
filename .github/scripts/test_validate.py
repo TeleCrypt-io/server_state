@@ -600,9 +600,33 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertEqual(failed.stdout, "")
             self.assertEqual(failed.stderr, "")
 
+            redirected_output = root / "redirected-proof"
+            redirected = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_bounded --sensitive 1024 {shlex.quote(str(redirected_output))} 10 "
+                    "/usr/bin/python3 -c 'print(\"telecrypt-synapse-proof:uid\")' >/dev/null",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(redirected.returncode, 0)
+            self.assertEqual(redirected.stdout, "")
+            self.assertEqual(redirected.stderr, "")
+            self.assertEqual(redirected_output.read_text(encoding="utf-8"), "telecrypt-synapse-proof:uid\n")
+
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertIn("container_sensitive_proof_class", workflow)
         self.assertIn("proof_status=$?", workflow)
+        proof_start = workflow.index("      - name: Verify UID-991 secret runtime contract")
+        proof_end = workflow.index("Verify UID-991 MAS secret isolation", proof_start)
+        proof_block = workflow[proof_start:proof_end]
+        self.assertIn('mkdir -p "$TELECRYPT_DATA_DIR/runtime/synapse-staging"', proof_block)
+
         for status in range(70, 77):
             self.assertIn(f"fail({status},", workflow)
 

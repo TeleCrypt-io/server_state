@@ -76,6 +76,14 @@ class ManifestTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertNotIn("synapse/media_store", workflow)
 
+    def test_validation_workflow_runs_only_on_trusted_pushes(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            '  push:\n    branches: [main]\n    tags: ["server-state-*"]',
+            workflow,
+        )
+        self.assertNotIn("pull_request:", workflow)
+
     def test_synapse_mas_peer_is_internal_and_egress_isolated(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         self.assertEqual(validate.EGRESS_NETWORKS["synapse"], "synapse_egress_net")

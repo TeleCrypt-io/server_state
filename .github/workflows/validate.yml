@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     tags: ["server-state-*"]
-  pull_request:
 
 concurrency:
   group: server-state-${{ github.workflow }}-${{ github.ref }}

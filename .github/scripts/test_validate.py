@@ -123,6 +123,8 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("client_registration/violation", mas)
         self.assertNotIn("postgres_mas", mas)
         self.assertIn("HomeServerConfig", workflow)
+        self.assertIn("load_config", workflow)
+        self.assertNotIn("loader.read_config", workflow)
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
         self.assertNotIn('"transport":"disabled"', workflow)
@@ -734,6 +736,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
         ):
             self.assertIn(f"mas_failure {phase}", workflow)
         self.assertIn('echo "MAS secret proof failed: $1; sensitive diagnostics were withheld"', workflow)
+        for phase in ("container-run", "output-read", "output-contract"):
+            self.assertIn(f"synapse_loader_failure {phase}", workflow)
+        self.assertIn('echo "Synapse JSON loader proof failed: $1; sensitive diagnostics were withheld"', workflow)
 
         proof_compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "secret-proof.compose.yml").read_text(encoding="utf-8"))
         canonical_compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))
@@ -751,6 +756,14 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertNotIn("networks", proof_services[proof_name])
             self.assertNotIn("depends_on", proof_services[proof_name])
         self.assertNotIn("volumes", proof_services["synapse-secret-proof"])
+        self.assertEqual(
+            proof_services["synapse-loader-proof"]["tmpfs"],
+            [
+                "/tmp:uid=991,gid=991,mode=1777,size=16m",
+                "/staging:uid=991,gid=991,mode=0700,size=16m",
+            ],
+        )
+        self.assertEqual(proof_services["synapse-loader-proof"]["environment"], ["TMPDIR=/staging/tmp"])
         self.assertGreaterEqual(workflow.count("-f .github/secret-proof.compose.yml"), 4)
 
         for status in range(70, 75):

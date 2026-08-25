@@ -321,32 +321,38 @@ jobs:
           printf '%s\n' 'server_name: stage.telecrypt.io' 'public_baseurl: https://backend.stage.telecrypt.io/' > "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           printf '%s\n' 'http:' '  public_base: https://backend.stage.telecrypt.io/auth/' '  issuer: https://backend.stage.telecrypt.io/auth/' > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_loader_output="$RUNNER_TEMP/synapse-json-loader.log"
+          synapse_loader_cleanup() {
+            rm -f -- "$synapse_loader_output" "$synapse_loader_output.stderr"
+          }
+          synapse_loader_failure() {
+            echo "Synapse JSON loader proof failed: $1; sensitive diagnostics were withheld" >&2
+            exit 1
+          }
+          trap synapse_loader_cleanup EXIT
           if ! container_bounded --sensitive 65536 "$synapse_loader_output" 120 docker compose --ansi never --env-file .env.example \
             -f .github/secret-proof.compose.yml run --rm --no-deps -T \
             --entrypoint python synapse-loader-proof -c '
-          import inspect
           from synapse.config.homeserver import HomeServerConfig
 
-          loader = HomeServerConfig()
-          parameters = inspect.signature(loader.read_config).parameters
-          values = {
-              "config_dir_path": "/",
-              "data_dir_path": "/data",
-              "config_path": ["/homeserver.yaml", "/secrets.json", "/runtime-identity.yaml"],
-              "generate_keys": False,
-              "generate_secrets": False,
-              "report_stats": False,
-              "print_warnings": False,
-          }
-          loader.read_config(**{key: value for key, value in values.items() if key in parameters})
+          config = HomeServerConfig.load_config(
+              "Synapse JSON loader proof",
+              ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
+          )
+          if config is None:
+              raise SystemExit("Synapse config loader returned no config")
           print("Synapse JSON config loader accepted")
           ' >/dev/null; then
-            rm -f -- "$synapse_loader_output" "$synapse_loader_output.stderr"
-            echo "Synapse JSON loader proof failed; sensitive diagnostics were withheld" >&2
-            exit 1
+            synapse_loader_failure container-run
           fi
-          test "$(tail -n 1 "$synapse_loader_output")" = "Synapse JSON config loader accepted"
-          rm -f -- "$synapse_loader_output" "$synapse_loader_output.stderr"
+          if ! synapse_loader_marker="$(tail -n 1 "$synapse_loader_output")"; then
+            synapse_loader_failure output-read
+          fi
+          if [[ "$synapse_loader_marker" != "Synapse JSON config loader accepted" ]]; then
+            synapse_loader_failure output-contract
+          fi
+          trap - EXIT
+          synapse_loader_cleanup
+          echo 'Synapse JSON config loader accepted'
 
       - name: Verify exact selected container images
         run: |

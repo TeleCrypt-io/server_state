@@ -253,6 +253,31 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     check("path /agents" in matcher("agents_other_method") and "not method POST" in matcher("agents_other_method"), "registration rejection")
     rejects_methods("mas_compat_other_method")
     rejects_methods("agents_other_method")
+    delete_path = "/_matrix/client/unstable/io.telecrypt.storage/delete_media"
+    delete_other = matcher("telecrypt_delete_media_other_method")
+    delete_post = matcher("telecrypt_delete_media")
+    check(
+        f"path {delete_path}" in delete_other and "not method POST" in delete_other,
+        "media deletion rejection matcher",
+    )
+    check(
+        f"method POST" in delete_post and f"path {delete_path}" in delete_post,
+        "media deletion POST matcher",
+    )
+    rejects_methods("telecrypt_delete_media_other_method")
+    delete_handle = re.search(r"(?ms)^\thandle @telecrypt_delete_media \{.*?^\t\}", caddy)
+    check(
+        delete_handle
+        and "request_body" in delete_handle.group(0)
+        and "max_size 32KiB" in delete_handle.group(0)
+        and "reverse_proxy synapse:8008" in delete_handle.group(0),
+        "media deletion body limit/proxy",
+    )
+    check(
+        caddy.index("@telecrypt_delete_media_other_method") < caddy.index("\t@synapse path_regexp")
+        and caddy.index("@telecrypt_delete_media {") < caddy.index("\t@synapse path_regexp"),
+        "media deletion route order",
+    )
     check("http://{$SERVER_NAME}:8080" in caddy and "http://backend.{$SERVER_NAME}:8080" in caddy, "host identities")
     sites = re.findall(r"(?ms)^http://[^\n]+ \{.*?^\}", caddy)
     check(len(sites) == 2 and all("import ingress_peer_gate" in site and "import access_log" in site for site in sites), "ingress peer gate/logs")
@@ -303,6 +328,12 @@ def validate_caddy_negative(caddy: str, body: str) -> None:
         caddy.replace("\t@mas_compat {\n\t\tmethod POST\n", "\t@mas_compat {\n", 1),
         caddy.replace("\t\tnot method POST\n", "", 1),
         caddy.replace("\t\tpath /agents\n\t\tnot method POST\n", "\t\tpath /agents\n", 1),
+        caddy.replace(
+            "\t@telecrypt_delete_media {\n\t\tmethod POST\n",
+            "\t@telecrypt_delete_media {\n",
+            1,
+        ),
+        caddy.replace("\t\tmax_size 32KiB\n", "\t\tmax_size 128MiB\n", 1),
         caddy.replace("\t\tmethod GET\n\t\tpath /.well-known/matrix/client", "\t\tmethod POST\n\t\tpath /.well-known/matrix/client", 1),
         caddy.replace("\timport ingress_peer_gate\n", "", 1),
     )

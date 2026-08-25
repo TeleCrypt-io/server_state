@@ -181,6 +181,36 @@ class ManifestTests(unittest.TestCase):
             validate.validate_synapse_provenance(labels, changed, "1.159-tc3", "0.4.0")
 
 
+class CaddyRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        self.caddy = (root / "Caddyfile").read_text(encoding="utf-8")
+        compose = (root / "compose.yml").read_text(encoding="utf-8")
+        self.caddy_body = validate.service_section(compose, "caddy")
+
+    def test_media_deletion_route_is_exact_bounded_and_before_generic_matrix_proxy(self) -> None:
+        path = "/_matrix/client/unstable/io.telecrypt.storage/delete_media"
+        post = self.caddy.index("@telecrypt_delete_media {")
+        generic = self.caddy.index("\t@synapse path_regexp")
+        self.assertLess(post, generic)
+        self.assertIn("method POST", self.caddy[post:self.caddy.index("\n\t}", post)])
+        self.assertIn(f"path {path}", self.caddy[post:self.caddy.index("\n\t}", post)])
+        self.assertIn("max_size 32KiB", self.caddy[post:generic])
+
+    def test_media_deletion_non_post_is_rejected_with_allow_header(self) -> None:
+        start = self.caddy.index("@telecrypt_delete_media_other_method {")
+        end = self.caddy.index("\n\t}", start)
+        matcher = self.caddy[start:end]
+        handle_start = self.caddy.index("handle @telecrypt_delete_media_other_method {")
+        handle_end = self.caddy.index("\n\t}", handle_start)
+        handle = self.caddy[handle_start:handle_end]
+        self.assertIn("path /_matrix/client/unstable/io.telecrypt.storage/delete_media", matcher)
+        self.assertIn("not method POST", matcher)
+        self.assertIn('header Allow "POST"', handle)
+        self.assertIn('respond "Method Not Allowed" 405', handle)
+        self.assertNotIn("reverse_proxy", handle)
+
+
 class GitTransportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory(prefix="server-state-git-")

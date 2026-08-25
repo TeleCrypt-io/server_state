@@ -188,6 +188,30 @@ http://backend.{$SERVER_NAME}:8080 {
 			import strip_untrusted_client_ip
 		}
 	}
+
+	# Media deletion is an authenticated Synapse operation, but only POST is part of its contract.
+	# Reject other methods at the edge and cap accepted deletion batches before proxying them.
+	@telecrypt_delete_media_other_method {
+		path /_matrix/client/unstable/io.telecrypt.storage/delete_media
+		not method POST
+	}
+	handle @telecrypt_delete_media_other_method {
+		header Allow "POST"
+		respond "Method Not Allowed" 405
+	}
+	@telecrypt_delete_media {
+		method POST
+		path /_matrix/client/unstable/io.telecrypt.storage/delete_media
+	}
+	handle @telecrypt_delete_media {
+		request_body {
+			max_size 32KiB
+		}
+		reverse_proxy synapse:8008 {
+			import strip_untrusted_client_ip
+		}
+	}
+
 	# Enabled Matrix client and media resources → Synapse. /_synapse and other Matrix resources are
 	# deliberately excluded: see the admin block above and the listener resources in synapse.yaml.
 	@synapse path_regexp ^/_matrix/(client|media)(/|$)

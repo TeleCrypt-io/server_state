@@ -722,6 +722,18 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn('install -d -m 700 "$fixture_secrets"', workflow)
         self.assertIn("install -m 444 .github/fixtures/synapse.secrets.json", workflow)
         self.assertIn("install -m 444 .github/fixtures/synapse-signing-fixture.txt", workflow)
+        for phase in (
+            "config-check",
+            "config-output-read",
+            "container-user-inspection",
+            "container-user-contract",
+            "output-secret-isolation",
+            "missing-signing-path-accepted",
+            "missing-signing-path-timeout",
+            "cleanup",
+        ):
+            self.assertIn(f"mas_failure {phase}", workflow)
+        self.assertIn('echo "MAS secret proof failed: $1; sensitive diagnostics were withheld"', workflow)
 
         proof_compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "secret-proof.compose.yml").read_text(encoding="utf-8"))
         canonical_compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))

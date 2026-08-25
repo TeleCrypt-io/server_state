@@ -369,6 +369,22 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("bounded-command.py", Path(__file__).with_name("run_bounded_combined.sh").read_text(encoding="utf-8"))
         self.assertNotRegex(workflow, r"grep -Eiq '.*404")
 
+    def test_release_workflow_discovers_complete_unique_draft_by_numeric_id(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn("releases?per_page=100&page=$page", workflow)
+        self.assertIn("--jq '[.[] | {id,tag_name,draft}]'", workflow)
+        self.assertIn("max_release_pages=100", workflow)
+        self.assertIn("Release list completeness cannot be proven", workflow)
+        self.assertIn("match_count", workflow)
+        self.assertIn("get_release_by_id", workflow)
+        self.assertIn("release_id", workflow)
+        self.assertIn("upload_url", workflow)
+        self.assertIn("--method PATCH", workflow)
+        self.assertNotIn("/releases/tags/$GITHUB_REF_NAME", workflow)
+        self.assertNotIn("gh release create", workflow)
+        self.assertNotIn("gh release upload", workflow)
+        self.assertNotIn("gh release edit", workflow)
+
     def test_product_release_fetch_rejects_oversized_api_response(self) -> None:
         script = Path(__file__).parent / "fetch_product_releases.sh"
         with tempfile.TemporaryDirectory(prefix="server-state-gh-") as directory:

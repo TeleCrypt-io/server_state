@@ -543,13 +543,13 @@ jobs:
 
           release_body="Exact server_state image digest manifest for commit $release_commit."
           check_server_release() {
-            local release_path="$1"
+            local release_path="$1" release_id="$2"
             test "$(wc -c < "$release_path")" -le 1048576
-            jq -e --arg tag "$GITHUB_REF_NAME" \
+            jq -e --arg id "$release_id" --arg tag "$GITHUB_REF_NAME" \
               --arg name "$manifest_name" --arg digest "$manifest_digest" \
               --arg body "$release_body" \
               --argjson size "$manifest_size" '
-                (.id | type) == "number" and (.id == (.id | floor)) and .id > 0 and
+                (.id | type) == "number" and (.id | tostring) == $id and (.id == (.id | floor)) and .id > 0 and
                 (.body | type) == "string" and .body == $body and
                 .tag_name == $tag and .name == $tag and .draft == false and .prerelease == false and .immutable == true and
                 (.assets | length) == 1 and
@@ -560,32 +560,33 @@ jobs:
               ' "$release_path" >/dev/null
           }
           check_server_draft() {
-            local release_path="$1"
+            local release_path="$1" release_id="$2"
             test "$(wc -c < "$release_path")" -le 1048576
-            jq -e --arg tag "$GITHUB_REF_NAME" --arg name "$manifest_name" \
+            jq -e --arg id "$release_id" --arg tag "$GITHUB_REF_NAME" --arg name "$manifest_name" \
               --arg body "$release_body" '
-                (.id | type) == "number" and (.id == (.id | floor)) and .id > 0 and
+                (.id | type) == "number" and (.id | tostring) == $id and (.id == (.id | floor)) and .id > 0 and
                 (.body | type) == "string" and .body == $body and
                 .tag_name == $tag and .name == $tag and .draft == true and .prerelease == false and
                 (.assets | type == "array" and length <= 1) and
                 ((.assets | length) == 0 or
                   ((.assets | length) == 1 and .assets[0].name == $name and
                    .assets[0].state == "uploaded" and
-                   (.assets[0].id | type) == "number" and
-                   (.assets[0].size | type) == "number"))
+                   (.assets[0].id | type) == "number" and (.assets[0].id == (.assets[0].id | floor)) and .assets[0].id > 0 and
+                   (.assets[0].size | type) == "number" and (.assets[0].size == (.assets[0].size | floor)) and .assets[0].size > 0 and .assets[0].size <= 1048576))
               ' "$release_path" >/dev/null
           }
           release_json_path="$RUNNER_TEMP/release.json"
           release_error_path="$RUNNER_TEMP/release.error"
           release_headers_path="$RUNNER_TEMP/release.headers"
-          get_release() {
-            local command_status code
+          get_release_by_id() {
+            local release_id="$1" command_status code
+            [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
             set +e
             bounded_gh 1048576 65536 1048576 "$release_headers_path" "$release_error_path" 30 \
               gh api --include --hostname github.com \
               --header 'Accept: application/vnd.github+json' \
               --header 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
+              "repos/$GITHUB_REPOSITORY/releases/$release_id"
             command_status=$?
             set -e
             code="$(http_status "$release_headers_path")"
@@ -598,14 +599,58 @@ jobs:
                 return 0
                 ;;
               404)
-                test "$command_status" -ne 0
-                return 4
-                ;;
+              test "$command_status" -ne 0
+              return 4
+              ;;
               *)
                 cat -- "$release_error_path" >&2
                 return 1
                 ;;
             esac
+          }
+          discover_release() {
+            local page=1 page_size list_status list_code page_headers page_json match_count
+            local max_release_pages=100
+            local matches_path="$metadata_dir/release-matches.jsonl"
+            : >"$matches_path"
+            while :; do
+              page_headers="$metadata_dir/release-page-$page.headers"
+              page_json="$metadata_dir/release-page-$page.json"
+              set +e
+              bounded_gh 1048576 65536 1048576 "$page_headers" "$page_headers.error" 30 \
+                gh api --include --hostname github.com \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'X-GitHub-Api-Version: 2026-03-10' \
+                --jq '[.[] | {id,tag_name,draft}]' \
+                "repos/$GITHUB_REPOSITORY/releases?per_page=100&page=$page"
+              list_status=$?
+              set -e
+              test "$list_status" -eq 0
+              list_code="$(http_status "$page_headers")"
+              test "$list_code" = 200
+              http_body "$page_headers" >"$page_json"
+              test "$(wc -c <"$page_json")" -le 1048576
+              jq -e 'type == "array" and length <= 100' "$page_json" >/dev/null
+              jq -c --arg tag "$GITHUB_REF_NAME" '.[] | select(.tag_name == $tag) | {id,tag_name,draft}' "$page_json" >>"$matches_path"
+              page_size="$(jq -er 'length' "$page_json")"
+              if [[ "$page_size" -lt 100 ]]; then
+                break
+              fi
+              if [[ "$page" -ge "$max_release_pages" ]]; then
+                echo "Release list completeness cannot be proven within the bounded page limit" >&2
+                exit 1
+              fi
+              page=$((page + 1))
+            done
+            match_count="$(jq -s -er 'length' "$matches_path")"
+            [[ "$match_count" -le 1 ]]
+            if [[ "$match_count" -eq 0 ]]; then
+              release_discovery_state="absent"
+              release_id=""
+              return 0
+            fi
+            release_id="$(jq -s -er '.[0].id | select(type == "number" and . == floor and . > 0) | tostring' "$matches_path")"
+            release_discovery_state="$(jq -s -er 'if .[0].draft == true then "draft" elif .[0].draft == false then "published" else empty end' "$matches_path")"
           }
           download_and_compare_manifest() {
             local directory="$1" asset_id="$2"
@@ -622,57 +667,98 @@ jobs:
           # Re-fetch the source identity after all registry work and immediately before the
           # release transaction. The tag and current remote main must still name this commit.
           verify_source_identity
-          if get_release; then
-            check_server_draft "$release_json_path"
-          else
-            status=$?
-            test "$status" = 4
-            set +e
-            bounded_gh 65536 65536 65536 "$metadata_dir/release-create.log" "$metadata_dir/release-create.error" 60 \
-              gh release create "$GITHUB_REF_NAME" --repo "github.com/$GITHUB_REPOSITORY" --draft \
-              --verify-tag --title "$GITHUB_REF_NAME" --notes "$release_body"
-            set -e
-            # If the client lost its response after a successful create, continue only when the
-            # exact draft can be recovered. Any final or ambiguous record fails closed.
-            get_release || exit 1
-            test ! -s "$metadata_dir/release-create.error"
-            check_server_draft "$release_json_path"
-          fi
+          discover_release
+          case "$release_discovery_state" in
+            published)
+              echo "An exact published Release already exists; refusing to mutate it" >&2
+              exit 1
+              ;;
+            draft)
+              get_release_by_id "$release_id"
+              check_server_draft "$release_json_path" "$release_id"
+              ;;
+            absent)
+              # Reconfirm the authoritative source immediately before the only create mutation.
+              verify_source_identity
+              create_path="$metadata_dir/release-create.json"
+              set +e
+              bounded_gh 65536 65536 65536 "$create_path" "$metadata_dir/release-create.error" 60 \
+                gh api --hostname github.com --method POST \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'X-GitHub-Api-Version: 2026-03-10' \
+                --raw-field "tag_name=$GITHUB_REF_NAME" \
+                --raw-field "name=$GITHUB_REF_NAME" \
+                --raw-field "body=$release_body" \
+                --raw-field "target_commitish=$release_commit" \
+                --field draft=true --field prerelease=false \
+                "repos/$GITHUB_REPOSITORY/releases"
+              create_status=$?
+              set -e
+              if [[ "$create_status" -eq 0 ]]; then
+                release_id="$(jq -er '.id | select(type == "number" and . == floor and . > 0) | tostring' "$create_path")"
+              else
+                # A lost create response is recoverable only through a complete, unique draft
+                # discovery. Any absent or ambiguous result fails closed.
+                test ! -s "$metadata_dir/release-create.error"
+                discover_release
+                test "$release_discovery_state" = draft
+              fi
+              get_release_by_id "$release_id"
+              check_server_draft "$release_json_path" "$release_id"
+              ;;
+            *)
+              echo "Release discovery returned an unknown state" >&2
+              exit 1
+              ;;
+          esac
           asset_count="$(jq -er '.assets|length' "$release_json_path")"
           if [[ "$asset_count" -eq 0 ]]; then
             test "$manifest_size" -le 1048576
+            upload_url="$(jq -er '.upload_url | select(type == "string" and test("^https://uploads\\.github\\.com/repos/[^/]+/[^/]+/releases/[0-9]+/assets\\{\\?name,label\\}$"))' "$release_json_path")"
+            upload_url="${upload_url%\{*}"
+            test "$upload_url" = "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$release_id/assets"
             set +e
             bounded_gh 65536 65536 65536 "$metadata_dir/release-upload.log" "$metadata_dir/release-upload.error" 120 \
-              gh release upload "$GITHUB_REF_NAME" "$manifest_path" --repo "github.com/$GITHUB_REPOSITORY"
+              gh api --hostname github.com --method POST \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'Content-Type: application/json' \
+              --header 'X-GitHub-Api-Version: 2026-03-10' \
+              --input "$manifest_path" "$upload_url?name=$manifest_name"
             upload_status=$?
             set -e
             test ! -s "$metadata_dir/release-upload.error"
-            get_release
+            get_release_by_id "$release_id"
           fi
-          get_release
-          check_server_draft "$release_json_path"
+          get_release_by_id "$release_id"
+          check_server_draft "$release_json_path" "$release_id"
           release_asset_id="$(jq -er --arg name "$manifest_name" \
-            '.assets | select(length == 1) | .[0] | select(.name == $name) | .id' "$release_json_path")"
+            '.assets | select(length == 1) | .[0] | select(.name == $name and (.id | type == "number" and . == floor and . > 0)) | .id' "$release_json_path")"
           draft_dir="$RUNNER_TEMP/draft-release"
           download_and_compare_manifest "$draft_dir" "$release_asset_id"
           if [[ "${upload_status:-0}" -ne 0 ]]; then
             test ! -s "$metadata_dir/release-upload.error"
           fi
+          # Reconfirm source and the exact numeric draft immediately before publication.
+          verify_source_identity
+          get_release_by_id "$release_id"
+          check_server_draft "$release_json_path" "$release_id"
           set +e
           bounded_gh 65536 65536 65536 "$metadata_dir/release-edit.log" "$metadata_dir/release-edit.error" 60 \
-            gh release edit "$GITHUB_REF_NAME" --repo "github.com/$GITHUB_REPOSITORY" \
-            --draft=false --verify-tag --title "$GITHUB_REF_NAME" --notes "$release_body"
+            gh api --hostname github.com --method PATCH \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            --field draft=false "repos/$GITHUB_REPOSITORY/releases/$release_id"
           edit_status=$?
           set -e
           test ! -s "$metadata_dir/release-edit.error"
           final_release_json_path="$RUNNER_TEMP/final-release.json"
-          get_release
+          get_release_by_id "$release_id"
           cp -- "$release_json_path" "$final_release_json_path"
-          check_server_release "$final_release_json_path"
+          check_server_release "$final_release_json_path" "$release_id"
           if [[ "$edit_status" -ne 0 ]]; then
             test ! -s "$metadata_dir/release-edit.error"
           fi
-          release_asset_id="$(jq -er '.assets[0].id' "$final_release_json_path")"
+          release_asset_id="$(jq -er '.assets[0].id | select(type == "number" and . == floor and . > 0)' "$final_release_json_path")"
           final_dir="$RUNNER_TEMP/final-release"
           download_and_compare_manifest "$final_dir" "$release_asset_id"
           verify_registry_digests

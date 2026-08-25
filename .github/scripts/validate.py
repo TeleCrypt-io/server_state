@@ -348,6 +348,7 @@ def validate_caddy_negative(caddy: str, body: str) -> None:
 def validate_source(values: dict[str, str]) -> None:
     compose = (ROOT / "compose.yml").read_text(encoding="utf-8")
     caddy = (ROOT / "Caddyfile").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env = assignments(env_text)
     sections = {service: service_section(compose, service) for service in SERVICES}
@@ -358,6 +359,7 @@ def validate_source(values: dict[str, str]) -> None:
     check(len(re.findall(r"(?m)^    image:", compose)) == len(SERVICE_IMAGES) and not re.search(r"(?m)^    image: [^$]", compose), "image indirection")
     check("build:" not in compose, "local builds")
     check("container_name:" not in compose, "global container names")
+    check("synapse/media_store" not in workflow, "legacy persistent media path")
     for forbidden in ("privileged:", "cap_add:", "network_mode:", "pid:", "ipc:", "devices:", "/var/run/docker.sock"):
         check(forbidden not in compose, forbidden)
     check("ports:" in sections["caddy"] and all("ports:" not in sections[s] for s in SERVICES if s != "caddy"), "listener ownership")

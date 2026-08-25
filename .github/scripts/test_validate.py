@@ -69,6 +69,10 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("PLAN_SESSION_KEY", workflow)
         self.assertNotRegex(workflow, r"(?m)(?:^|\s)SESSION_KEY(?:\s|$)")
 
+    def test_validation_workflow_has_no_legacy_persistent_media_path(self) -> None:
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertNotIn("synapse/media_store", workflow)
+
     def test_synapse_mas_peer_is_internal_and_egress_isolated(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         self.assertEqual(validate.EGRESS_NETWORKS["synapse"], "synapse_egress_net")

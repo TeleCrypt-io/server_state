@@ -151,7 +151,7 @@ jobs:
             {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
-          mkdir -p "$TELECRYPT_DATA_DIR/runtime" "$TELECRYPT_DATA_DIR/synapse/media_store"
+          mkdir -p "$TELECRYPT_DATA_DIR/runtime"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           install -m 644 /dev/null "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_output="$RUNNER_TEMP/synapse-secret-proof.log"
@@ -282,7 +282,7 @@ jobs:
             {"secrets":{"encryption":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","keys":[{"key":"ci-signing-key"}]},"database":{"uri":"postgresql://telecrypt_mas_stage_user:ci-mas-db-secret@db.invalid/telecrypt_mas_stage?connect_timeout=5&sslmode=verify-full"},"matrix":{"homeserver":"stage.telecrypt.io","secret":"ci-matrix-secret"},"clients":[{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV","client_auth_method":"client_secret_basic","client_secret":"ci-plan-client-secret","redirect_uris":["https://backend.stage.telecrypt.io/plan/callback"]},{"client_id":"01ARZ3NDEKTSV4RRFFQ69G5FAW","client_auth_method":"client_secret_basic","client_secret":"ci-janitor-client-secret","redirect_uris":[]}]}
         run: |
           set -euo pipefail
-          mkdir -p "$TELECRYPT_DATA_DIR/runtime" "$TELECRYPT_DATA_DIR/synapse/media_store"
+          mkdir -p "$TELECRYPT_DATA_DIR/runtime"
           printf '%s\n' 'server_name: stage.telecrypt.io' 'public_baseurl: https://backend.stage.telecrypt.io/' > "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           printf '%s\n' 'http:' '  public_base: https://backend.stage.telecrypt.io/auth/' '  issuer: https://backend.stage.telecrypt.io/auth/' > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_loader_output="$RUNNER_TEMP/synapse-json-loader.log"

@@ -333,6 +333,31 @@ class GitTransportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), expected)
 
+    def test_accepts_exact_github_actions_https_origin_forms(self) -> None:
+        for origin in (
+            "https://github.com/TeleCrypt-io/server_state",
+            "https://github.com/TeleCrypt-io/server_state.git",
+        ):
+            git(self.root, "remote", "add", "origin", origin)
+            result = self.run_helper("check")
+            self.assertEqual(result.returncode, 0, (origin, result.stderr))
+            git(self.root, "remote", "remove", "origin")
+
+    def test_rejects_github_origin_near_misses(self) -> None:
+        for origin in (
+            "https://github.com/TeleCrypt-io/server_state/",
+            "https://github.com/TeleCrypt-io/server_state.git/",
+            "https://github.com/TeleCrypt-io/server_state.evil",
+            "https://github.com/TeleCrypt-io/server_state-other",
+            "https://github.com/telecrypt-io/server_state",
+            "https://x-access-token:redacted@github.com/TeleCrypt-io/server_state",
+            "git@github.com:TeleCrypt-io/server_state.git",
+        ):
+            git(self.root, "remote", "add", "origin", origin)
+            result = self.run_helper("check")
+            self.assertNotEqual(result.returncode, 0, origin)
+            git(self.root, "remote", "remove", "origin")
+
     def test_replacement_refs_do_not_change_tag_identity(self) -> None:
         first_commit = git(self.root, "rev-parse", "HEAD")
         git(self.root, "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "tag", "-a", "v1", "-m", "v1")

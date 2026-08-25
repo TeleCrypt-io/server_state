@@ -6,6 +6,9 @@ set -euo pipefail
 # and let Git validate the checkout it is operating on.
 readonly GIT=/usr/bin/git
 readonly REPOSITORY='TeleCrypt-io/server_state'
+# actions/checkout's HTTPS fetch URL intentionally omits `.git`; the helper's own
+# fetch target retains it. Both exact forms identify the same canonical repository.
+readonly REMOTE_NO_SUFFIX='https://github.com/TeleCrypt-io/server_state'
 readonly REMOTE='https://github.com/TeleCrypt-io/server_state.git'
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
@@ -110,7 +113,7 @@ inspect_config_file() {
   set -e
   [[ "$status" -eq 0 || "$status" -eq 1 ]] || die 'Git origin could not be inspected'
   if [[ -n "$origin" ]]; then
-    [[ "$origin" == "$REMOTE" ]] || die 'local Git origin is not canonical'
+    [[ "$origin" == "$REMOTE" || "$origin" == "$REMOTE_NO_SUFFIX" ]] || die 'local Git origin is not canonical'
   fi
 }
 

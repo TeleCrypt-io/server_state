@@ -478,6 +478,60 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("if container_bounded", bounded_value)
         self.assertIn('return "$status"', bounded_value)
 
+    def test_sensitive_proof_failures_have_fixed_classes_without_diagnostics(self) -> None:
+        classifications = {
+            "70": "uid",
+            "71": "mount-content",
+            "72": "mount-owner",
+            "73": "mount-mode",
+            "74": "secrets-json",
+            "75": "forbidden-mount",
+            "76": "environment-leak",
+            "124": "timeout",
+            "17": "bounded-command",
+        }
+        with tempfile.TemporaryDirectory(prefix="server-state-sensitive-class-") as directory:
+            root = Path(directory)
+            for status, expected in classifications.items():
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        f"source {shlex.quote(str(CONTAINER_HELPER))}; container_sensitive_failure_class {status}",
+                    ],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, status)
+                self.assertEqual(result.stdout, expected + "\n", status)
+                self.assertEqual(result.stderr, "", status)
+
+            output = root / "proof"
+            failed = subprocess.run(
+                [
+                    "/bin/bash",
+                    "-c",
+                    f"source {shlex.quote(str(CONTAINER_HELPER))}; "
+                    f"container_bounded --sensitive 1024 {shlex.quote(str(output))} 10 "
+                    "/usr/bin/python3 -c 'raise SystemExit(71)'",
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(failed.returncode, 71)
+            self.assertEqual(failed.stdout, "")
+            self.assertEqual(failed.stderr, "")
+
+        workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        self.assertIn("container_sensitive_failure_class", workflow)
+        self.assertIn("proof_status=$?", workflow)
+        for status in range(70, 77):
+            self.assertIn(f"raise SystemExit({status})", workflow)
+
     def test_product_tag_evidence_binds_exact_api_urls(self) -> None:
         key = "CASHIER_IMAGE"
         tag = validate.load_manifest()[key].rsplit(":", 1)[1]

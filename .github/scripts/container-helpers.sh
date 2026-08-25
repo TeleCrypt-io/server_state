@@ -3,6 +3,20 @@
 CONTAINER_HELPERS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly CONTAINER_HELPERS_DIR
 
+container_sensitive_failure_class() {
+  case "${1:-}" in
+    70) printf '%s\n' 'uid' ;;
+    71) printf '%s\n' 'mount-content' ;;
+    72) printf '%s\n' 'mount-owner' ;;
+    73) printf '%s\n' 'mount-mode' ;;
+    74) printf '%s\n' 'secrets-json' ;;
+    75) printf '%s\n' 'forbidden-mount' ;;
+    76) printf '%s\n' 'environment-leak' ;;
+    124) printf '%s\n' 'timeout' ;;
+    *) printf '%s\n' 'bounded-command' ;;
+  esac
+}
+
 container_bounded() {
   local inherit_stdin=false
   local sensitive=false

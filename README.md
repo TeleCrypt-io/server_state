@@ -142,23 +142,26 @@ guarded Compose process.
 
 This repository contains declarative state only. It publishes no packages, images, deployment
 tooling, secret templates, binaries, or wheels. Each exact state Release carries one deterministic
-JSON manifest binding the five selected image coordinates to their observed registry digests; the
-three first-party image entries also carry their immutable product-release source, tag, independently
-resolved annotated tag SHA and peeled commit, exact release body, and canonical digest-asset identity. The
-private Harness owns deployment operations and the secret-file contract.
+JSON manifest binding the five selected image coordinates to their observed registry digests. Before
+that manifest is published, the workflow verifies live immutable GitHub Release and annotated-tag
+evidence for the public Synapse and Controlplane repositories. Every image entry in the published
+manifest contains only its selected coordinate and digest; the private Harness owns deployment
+operations and the secret-file contract.
 
 A deliberately pushed, reviewed state tag receives an exact `server-state-<short-git-sha>` GitHub
 Release record through a draft-first flow: the workflow verifies the complete draft metadata and
 asset bytes before publishing, and resumes only an exact draft. A pre-existing published Release is
-refused. It
-selects exact component image releases, which must already be published and verified. The Release's single JSON asset binds those selected tags to their observed canonical
+refused. It selects exact component image releases, which must already be published and verified. The
+private Cashier immutable-Release check is intentionally an owner-authenticated local Harness gate
+performed before Server State selection; the hosted workflow validates Cashier only from its selected
+public GHCR digest and the exact OCI source, version, and revision labels. The Release's single JSON asset binds those selected tags to their observed canonical
 registry digests for Harness preflight. `versions.env` is the one canonical image coordinate manifest
 with exactly the five image keys used by Compose (`CADDY_IMAGE`, `SYNAPSE_IMAGE`, `MAS_IMAGE`,
 `CONTROLPLANE_IMAGE`, and `CASHIER_IMAGE`); the workflow
 rejects any Compose image tag, first-party image label, default command, entrypoint, user, route, or
 public-origin contract that differs from the selected release contract. The state release is an
-identity for one configuration commit, not a package version. Controlplane and Cashier release
-images advertise config contract `1`, and trusted exact state-tag runs of the public workflow
+identity for one configuration commit, not a package version. Controlplane and Cashier images
+advertise config contract `1`, and trusted exact state-tag runs of the public workflow
 authenticate to GHCR to verify both first-party images as well as the public images; main and
 pull-request runs receive the exact local contract checks without registry credentials. Do not change
 `versions.env` or `compose.yml` independently; update their exact coordinates and contracts together

@@ -69,11 +69,12 @@ CASHIER_ENV_KEYS = {
     "SYNAPSE_ADMIN_TOKEN", "CASHIER_DB_URL", "DODO_API_KEY", "DODO_WEBHOOK_SECRET",
     "DODO_PRODUCT_ID", "PLAN_ASSERTION_PUBLIC_KEY",
 }
-FIRST_PARTY_RELEASES = {
+PUBLIC_RELEASES = {
     "SYNAPSE_IMAGE": {"repository": "TeleCrypt-io/telecrypt-synapse", "asset_prefix": "telecrypt-synapse-"},
     "CONTROLPLANE_IMAGE": {"repository": "TeleCrypt-io/controlplane", "asset_prefix": "controlplane-"},
-    "CASHIER_IMAGE": {"repository": "TeleCrypt-io/cashier", "asset_prefix": "telecrypt-cashier-"},
 }
+PUBLIC_RELEASE_KEYS = frozenset(PUBLIC_RELEASES)
+IMAGE_RECORD_KEYS = frozenset({"digest", "image"})
 PRODUCT_RELEASE_RECORD_KEYS = {
     "asset", "asset_id", "asset_label", "asset_digest", "asset_size",
     "release_id", "source_commit", "tag", "annotated_tag_sha", "body",
@@ -725,6 +726,8 @@ def validate_published_images(directory: Path) -> None:
             check(re.fullmatch(r"[0-9a-f]{40}", channel.get("org.opencontainers.image.revision", "")), (key, "revision"))
             check(channel.get("io.telecrypt.config-contract") == "1", (key, "config contract"))
         check(labels["org.opencontainers.image.revision"] == config_labels["org.opencontainers.image.revision"], (key, "label channels"))
+        if key == "CASHIER_IMAGE":
+            check(validate_cashier_provenance(labels, values[key]) == validate_cashier_provenance(config_labels, values[key]), (key, "label channels"))
         check(config.get("User") == "991:991", (key, "user"))
     labels, config, _ = images["SYNAPSE_IMAGE"]
     validate_synapse_provenance(
@@ -737,7 +740,29 @@ def validate_published_images(directory: Path) -> None:
 
 
 def product_release_asset_name(key: str, image: str) -> str:
-    return f"{FIRST_PARTY_RELEASES[key]['asset_prefix']}{image.rsplit(':', 1)[1]}.digest.json"
+    return f"{PUBLIC_RELEASES[key]['asset_prefix']}{image.rsplit(':', 1)[1]}.digest.json"
+
+
+def validate_cashier_provenance(labels: object, image: str) -> dict[str, str]:
+    version = image.rsplit(":", 1)[1]
+    check(type(labels) is dict, ("CASHIER_IMAGE", "provenance labels"))
+    source = labels.get("org.opencontainers.image.source")
+    label_version = labels.get("org.opencontainers.image.version")
+    revision = labels.get("org.opencontainers.image.revision")
+    check(
+        type(source) is str
+        and source == "https://github.com/TeleCrypt-io/cashier"
+        and type(label_version) is str
+        and label_version == version
+        and type(revision) is str
+        and re.fullmatch(r"[0-9a-f]{40}", revision),
+        ("CASHIER_IMAGE", "provenance"),
+    )
+    return {"source": source, "version": label_version, "revision": revision}
+
+
+def validate_image_record(key: str, record: object) -> None:
+    check(type(record) is dict and set(record) == IMAGE_RECORD_KEYS, (key, "record shape"))
 
 
 def product_release_asset_names(key: str, image: str) -> set[str]:
@@ -749,6 +774,7 @@ def product_release_asset_names(key: str, image: str) -> set[str]:
 
 
 def parse_product_release_asset(key: str, raw: bytes) -> dict[str, str]:
+    check(key in PUBLIC_RELEASE_KEYS, (key, "public release evidence"))
     try:
         text = raw.decode("utf-8")
         values = json.loads(text)
@@ -763,13 +789,17 @@ def parse_product_release_asset(key: str, raw: bytes) -> dict[str, str]:
 
 
 def product_release_body(key: str, tag: str, source_commit: str) -> str:
+    check(key in PUBLIC_RELEASE_KEYS, (key, "public release evidence"))
     if key == "CONTROLPLANE_IMAGE":
         return f"Exact Controlplane release {tag}."
-    if key == "CASHIER_IMAGE":
-        return f"Exact Cashier release for source commit {source_commit}."
     if key == "SYNAPSE_IMAGE":
         return f"Exact Synapse release for source commit {source_commit}."
     return "TeleCrypt immutable image digest record."
+
+
+def validate_release_asset_label(key: str, item: object) -> str:
+    check(type(item) is dict and type(item.get("label")) is str and item["label"] == "", (key, "asset label"))
+    return item["label"]
 
 
 def validate_product_tag_evidence(
@@ -780,7 +810,7 @@ def validate_product_tag_evidence(
     tag_ref_document: dict,
     annotated_tag_document: dict,
 ) -> None:
-    api_root = f"https://api.github.com/repos/{FIRST_PARTY_RELEASES[key]['repository']}"
+    api_root = f"https://api.github.com/repos/{PUBLIC_RELEASES[key]['repository']}"
     check(
         type(tag_ref_document) is dict
         and tag_ref_document.get("ref") == f"refs/tags/{tag}",
@@ -862,11 +892,10 @@ def validate_product_release(
     for item in assets:
         check(type(item) is dict and type(item.get("id")) is int and item["id"] > 0 and item["id"] not in seen_ids, (key, "asset id"))
         seen_ids.add(item["id"])
+        validate_release_asset_label(key, item)
         name = item.get("name")
         check(
             type(name) is str
-            and "label" in item
-            and item.get("label") is None
             and item.get("state") == "uploaded"
             and type(item.get("size")) is int
             and item["size"] > 0
@@ -909,13 +938,19 @@ def image_release_manifest(values: dict[str, str], metadata: dict[str, dict], la
         digest = resolved_digests.get(key, document["Digest"]) if resolved_digests else document["Digest"]
         check(re.fullmatch(r"sha256:[0-9a-f]{64}", digest), (key, "resolved digest"))
         record = {"digest": digest, "image": image}
-        if key in FIRST_PARTY_RELEASES:
+        if key in PUBLIC_RELEASE_KEYS:
             check(product_releases and product_assets and product_tag_refs and product_annotated_tags and key in product_releases and key in product_assets and key in product_tag_refs and key in product_annotated_tags, (key, "release evidence"))
             provenance = labels[key]
             check(type(provenance) is dict, (key, "provenance labels"))
-            record.update(source=provenance.get("org.opencontainers.image.source", ""), version=provenance.get("org.opencontainers.image.version", ""))
-            check(type(record["source"]) is str and type(record["version"]) is str and record["source"] and record["version"], (key, "provenance"))
-            record["release"] = validate_product_release(
+            expected_source = f"https://github.com/TeleCrypt-io/{'telecrypt-synapse' if key == 'SYNAPSE_IMAGE' else 'controlplane'}"
+            check(
+                type(provenance.get("org.opencontainers.image.source")) is str
+                and provenance["org.opencontainers.image.source"] == expected_source
+                and type(provenance.get("org.opencontainers.image.version")) is str
+                and provenance["org.opencontainers.image.version"] == image.rsplit(":", 1)[1],
+                (key, "provenance"),
+            )
+            release_record = validate_product_release(
                 key,
                 image,
                 digest,
@@ -925,8 +960,11 @@ def image_release_manifest(values: dict[str, str], metadata: dict[str, dict], la
                 product_tag_refs[key],
                 product_annotated_tags[key],
             )
-            check(set(record["release"]) == PRODUCT_RELEASE_RECORD_KEYS, (key, "release record shape"))
-            check(record["release"]["source_commit"] == provenance.get("org.opencontainers.image.revision"), (key, "release revision"))
+            check(set(release_record) == PRODUCT_RELEASE_RECORD_KEYS, (key, "release record shape"))
+            check(release_record["source_commit"] == provenance.get("org.opencontainers.image.revision"), (key, "release revision"))
+        elif key == "CASHIER_IMAGE":
+            validate_cashier_provenance(labels[key], image)
+        validate_image_record(key, record)
         records[key] = record
     check(set(records) == set(IMAGE_KEYS), "five-image manifest")
     return {"annotated_tag_sha": annotated_tag_sha, "images": records, "schema_version": 1, "server_state_tag": release_tag, "source_commit": source_commit}
@@ -937,10 +975,10 @@ def validate_image_release_manifest(directory: Path, output: Path, release_tag: 
     validate_published_images(directory)
     metadata = {key: json.loads((directory / f"{image_reference_filename(values[key])}.metadata").read_text(encoding="utf-8")) for key in IMAGE_KEYS}
     labels = {key: json.loads((directory / f"{image_reference_filename(values[key])}.labels").read_text(encoding="utf-8")) for key in IMAGE_KEYS}
-    releases = {key: json.loads((directory / f"{key}.release.json").read_text(encoding="utf-8")) for key in FIRST_PARTY_RELEASES}
-    assets = {key: (directory / f"{key}.release.asset").read_bytes() for key in FIRST_PARTY_RELEASES}
-    tag_refs = {key: json.loads((directory / f"{key}.annotated-tag-ref.json").read_text(encoding="utf-8")) for key in FIRST_PARTY_RELEASES}
-    annotated_tags = {key: json.loads((directory / f"{key}.annotated-tag.json").read_text(encoding="utf-8")) for key in FIRST_PARTY_RELEASES}
+    releases = {key: json.loads((directory / f"{key}.release.json").read_text(encoding="utf-8")) for key in PUBLIC_RELEASES}
+    assets = {key: (directory / f"{key}.release.asset").read_bytes() for key in PUBLIC_RELEASES}
+    tag_refs = {key: json.loads((directory / f"{key}.annotated-tag-ref.json").read_text(encoding="utf-8")) for key in PUBLIC_RELEASES}
+    annotated_tags = {key: json.loads((directory / f"{key}.annotated-tag.json").read_text(encoding="utf-8")) for key in PUBLIC_RELEASES}
     resolved_digests = {
         key: (directory / f"{key}.tag-digest").read_text(encoding="utf-8").strip()
         for key in IMAGE_KEYS

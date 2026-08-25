@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -882,9 +883,9 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertIn(f"fail({status},", workflow)
 
     def test_product_tag_evidence_binds_exact_api_urls(self) -> None:
-        key = "CASHIER_IMAGE"
+        key = "SYNAPSE_IMAGE"
         tag = validate.load_manifest()[key].rsplit(":", 1)[1]
-        repository = validate.FIRST_PARTY_RELEASES[key]["repository"]
+        repository = validate.PUBLIC_RELEASES[key]["repository"]
         annotated_tag_sha = "b" * 40
         source_commit = "a" * 40
         api_root = f"https://api.github.com/repos/{repository}"
@@ -922,9 +923,122 @@ class ReleaseEvidenceTests(unittest.TestCase):
             b'","image":"repo/image","schema_version":1,"source_commit":"' + b"a" * 40 +
             b'","tag":"1.0.0"}\n'
         )
-        self.assertEqual(validate.parse_product_release_asset("CASHIER_IMAGE", raw)["tag"], "1.0.0")
+        self.assertEqual(validate.parse_product_release_asset("SYNAPSE_IMAGE", raw)["tag"], "1.0.0")
         with self.assertRaises(AssertionError):
-            validate.parse_product_release_asset("CASHIER_IMAGE", raw[:-1] + b" ")
+            validate.parse_product_release_asset("SYNAPSE_IMAGE", raw[:-1] + b" ")
+        with self.assertRaises(AssertionError):
+            validate.parse_product_release_asset("CASHIER_IMAGE", raw)
+
+    def test_product_release_asset_label_is_exact_empty_string(self) -> None:
+        self.assertEqual(validate.validate_release_asset_label("SYNAPSE_IMAGE", {"label": ""}), "")
+        for label in (None, "asset-label"):
+            with self.subTest(label=label), self.assertRaises(AssertionError):
+                validate.validate_release_asset_label("SYNAPSE_IMAGE", {"label": label})
+
+    def test_cashier_manifest_shape_and_oci_provenance_are_strict(self) -> None:
+        image = validate.load_manifest()["CASHIER_IMAGE"]
+        labels = {
+            "org.opencontainers.image.source": "https://github.com/TeleCrypt-io/cashier",
+            "org.opencontainers.image.version": image.rsplit(":", 1)[1],
+            "org.opencontainers.image.revision": "a" * 40,
+        }
+        self.assertNotIn("CASHIER_IMAGE", validate.PUBLIC_RELEASES)
+        self.assertEqual(
+            validate.validate_cashier_provenance(labels, image),
+            {"source": labels["org.opencontainers.image.source"], "version": labels["org.opencontainers.image.version"], "revision": labels["org.opencontainers.image.revision"]},
+        )
+        self.assertEqual(validate.IMAGE_RECORD_KEYS, {"digest", "image"})
+        for field, value in (
+            ("org.opencontainers.image.source", "https://github.com/TeleCrypt-io/other"),
+            ("org.opencontainers.image.version", "0.0.0"),
+            ("org.opencontainers.image.revision", "not-a-commit"),
+        ):
+            mutated = {**labels, field: value}
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                validate.validate_cashier_provenance(mutated, image)
+
+    def test_image_release_manifest_serializes_only_exact_image_digest_records(self) -> None:
+        values = validate.load_manifest()
+        digest = "sha256:" + "a" * 64
+        metadata = {key: {"Name": image.rsplit(":", 1)[0], "Digest": digest} for key, image in values.items()}
+        labels = {
+            key: {
+                "org.opencontainers.image.source": f"https://github.com/TeleCrypt-io/{'telecrypt-synapse' if key == 'SYNAPSE_IMAGE' else 'controlplane'}",
+                "org.opencontainers.image.version": image.rsplit(":", 1)[1],
+                "org.opencontainers.image.revision": "b" * 40,
+            }
+            for key, image in values.items()
+            if key in validate.PUBLIC_RELEASE_KEYS
+        }
+        labels["CASHIER_IMAGE"] = {
+            "org.opencontainers.image.source": "https://github.com/TeleCrypt-io/cashier",
+            "org.opencontainers.image.version": values["CASHIER_IMAGE"].rsplit(":", 1)[1],
+            "org.opencontainers.image.revision": "c" * 40,
+        }
+
+        def fake_release(key: str, image: str, _digest: str, provenance: dict, *_evidence: object) -> dict:
+            release = {field: "fixture" for field in validate.PRODUCT_RELEASE_RECORD_KEYS}
+            release["source_commit"] = provenance["org.opencontainers.image.revision"]
+            return release
+
+        with mock.patch.object(validate, "validate_product_release", side_effect=fake_release):
+            document = validate.image_release_manifest(
+                values,
+                metadata,
+                labels,
+                "server-state-abc1234",
+                "d" * 40,
+                "e" * 40,
+                product_releases={key: {} for key in validate.PUBLIC_RELEASE_KEYS},
+                product_assets={key: b"fixture" for key in validate.PUBLIC_RELEASE_KEYS},
+                product_tag_refs={key: {"fixture": True} for key in validate.PUBLIC_RELEASE_KEYS},
+                product_annotated_tags={key: {"fixture": True} for key in validate.PUBLIC_RELEASE_KEYS},
+                resolved_digests={key: digest for key in values},
+            )
+        for key, record in document["images"].items():
+            with self.subTest(key=key):
+                self.assertEqual(set(record), validate.IMAGE_RECORD_KEYS)
+                validate.validate_image_record(key, record)
+        cashier_with_extra = {**document["images"]["CASHIER_IMAGE"], "release": {}}
+        with self.assertRaises(AssertionError):
+            validate.validate_image_record("CASHIER_IMAGE", cashier_with_extra)
+
+    def test_product_release_fetch_is_public_only_and_reports_safe_request_identity(self) -> None:
+        script = Path(__file__).parent / "fetch_product_releases.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertNotIn("TeleCrypt-io/cashier", text)
+        self.assertNotIn("fetch_release_asset CASHIER_IMAGE", text)
+        for phase in ("tag-ref", "annotated-tag", "release", "asset"):
+            self.assertIn(f'{phase} "$repository" "$tag"', text)
+        with tempfile.TemporaryDirectory(prefix="server-state-gh-unauthorized-") as directory:
+            root = Path(directory)
+            fake_gh = root / "gh"
+            fake_gh.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' 'gh: Not Found (HTTP 404)' >&2\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            result = subprocess.run(
+                ["/bin/bash", str(script)],
+                cwd=script.parents[2],
+                env={
+                    **os.environ,
+                    "PATH": f"{root}:{os.environ['PATH']}",
+                    "GH_TOKEN": "offline-test-token",
+                    "METADATA_DIR": str(root / "metadata"),
+                },
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("phase=tag-ref", result.stderr)
+            self.assertIn("repository=TeleCrypt-io/telecrypt-synapse", result.stderr)
+            self.assertIn("tag=1.159-tc7", result.stderr)
+            self.assertNotIn("offline-test-token", result.stdout + result.stderr)
 
     def test_release_workflow_uses_bounded_machine_http_status_checks(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")

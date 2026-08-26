@@ -122,6 +122,16 @@ EXPECTED_DEPENDS_ON = {
 FORBIDDEN_SERVICE_KEYS = {"privileged", "network_mode", "pid", "ipc", "devices", "runtime", "device_cgroup_rules", "userns_mode", "uts", "cgroup", "cgroup_parent", "sysctls", "extra_hosts"}
 MIN_DOCKER_ENGINE = (28, 0, 0)
 MIN_COMPOSE = (2, 33, 1)
+MAS_LISTENER_BINDINGS = {
+    "web": "[::]:8080",
+    "internal": "192.168.254.2:8081",
+}
+MAS_LISTENER_RESOURCES = {
+    "web": ["discovery", "human", "oauth", "compat", "graphql", "assets"],
+    "internal": ["adminapi"],
+}
+MAS_ADMIN_SUBNET = "192.168.254.0/29"
+MAS_ADMIN_ADDRESS = "192.168.254.2"
 
 
 def check(condition: object, message: object) -> None:
@@ -236,6 +246,76 @@ def service_network_names(service_body: str) -> set[str]:
     names = re.findall(r"^      ([a-z][a-z0-9_-]*):(?:[ \t].*)?$", found.group("body"), re.MULTILINE)
     check(len(names) == len(set(names)), "duplicate service network")
     return set(names)
+
+
+def service_network_options(service_body: str, network: str) -> str:
+    found = re.search(
+        rf"(?m)^      {re.escape(network)}:\n(?P<body>(?:^        .*(?:\n|\Z))*)",
+        service_body,
+    )
+    check(found, (network, "missing service network"))
+    return found.group("body")
+
+
+def validate_mas_listeners(mas: str) -> None:
+    """Require MAS's supported socket-address listener contract.
+
+    This deployment uses socket addresses rather than the Docker network self-aliases that produced
+    zero listeners in production. Network attachment and resource selection provide the reachability
+    boundary instead.
+    """
+    listener_matches = list(re.finditer(
+        r"(?ms)^    - name: (?P<name>[a-z][a-z0-9_-]*)\n(?P<body>.*?)(?=^    - name: |\n  trusted_proxies:)",
+        mas,
+    ))
+    check([match.group("name") for match in listener_matches] == ["web", "internal"], "MAS listener set")
+    for match in listener_matches:
+        name = match.group("name")
+        body = match.group("body")
+        resources = re.findall(r"(?m)^        - name: ([a-z][a-z0-9_-]*)\s*(?:#.*)?$", body)
+        check(resources == MAS_LISTENER_RESOURCES[name], (name, "resources"))
+        binds = re.findall(r"(?m)^        - address: '([^']+)'\s*$", body)
+        check(binds == [MAS_LISTENER_BINDINGS[name]], (name, "binds"))
+        check(not re.search(r"(?m)^\s*-\s+(?:host|port):", body), (name, "hostname/port bind"))
+        check(not re.search(r"mas-(?:edge|synapse|plan|admin)", body), (name, "hostname alias bind"))
+
+
+def validate_mas_admin_network(compose: str, sections: dict[str, str]) -> None:
+    """Require one deterministic private MAS admin interface and no alias-based bind path."""
+    check(
+        ipaddress.ip_address(MAS_ADMIN_ADDRESS) in ipaddress.ip_network(MAS_ADMIN_SUBNET),
+        "MAS admin address/subnet",
+    )
+    admin_network = re.search(
+        r"(?ms)^  mas_admin_net:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:\n|\Z)",
+        compose[compose.index("\nnetworks:") + 1 :],
+    )
+    check(admin_network, "MAS admin network declaration")
+    network_body = admin_network.group("body")
+    check(
+        re.search(r"(?m)^    internal: true\s*$", network_body)
+        and re.findall(r"(?m)^        - subnet: ([^\s]+)\s*$", network_body) == [MAS_ADMIN_SUBNET],
+        "MAS admin private subnet",
+    )
+    mas_admin_options = service_network_options(sections["mas"], "mas_admin_net")
+    check(
+        re.fullmatch(
+            r"        aliases:\n          - mas-admin\n"
+            r"        ipv4_address: " + re.escape(MAS_ADMIN_ADDRESS) + r"\n?",
+            mas_admin_options,
+        ),
+        "MAS admin alias and static address",
+    )
+    check(not service_network_options(sections["janitor"], "mas_admin_net").strip(), "Janitor static admin address")
+    for service, networks in SERVICE_NETWORKS.items():
+        for network in networks:
+            if service == "mas" and network == "mas_admin_net":
+                continue
+            options = service_network_options(sections[service], network)
+            check(
+                "ipv4_address:" not in options and "aliases:" not in options,
+                (service, network, "unexpected network option"),
+            )
 
 
 def validate_source_topology(compose: str, sections: dict[str, str]) -> None:
@@ -510,15 +590,15 @@ def validate_source(values: dict[str, str]) -> None:
         "Synapse complete private loader maps",
     )
     check(not re.search(r"^\s*(server_name|public_baseurl):", synapse, re.MULTILINE), "Synapse identity overlay")
+    validate_mas_listeners(mas)
+    validate_mas_admin_network(compose, sections)
     check(
-        mas.count("- host: mas-edge\n          port: 8080") == 1
-        and mas.count("- host: mas-synapse\n          port: 8080") == 1
-        and mas.count("- host: mas-plan\n          port: 8080") == 1
-        and "host: mas-admin" in mas
-        and "- name: adminapi" in mas
+        "- name: adminapi" in mas
         and "- name: health" not in mas
-        and "address: '[::]:8080'" not in mas,
-        "MAS network-scoped listeners",
+        and "mas_admin_net" in sections["mas"]
+        and "mas_admin_net" in sections["janitor"]
+        and "mas_admin_net" not in sections["caddy"],
+        "MAS private credential-gated admin boundary",
     )
     check("  trusted_proxies: []" in mas, "MAS proxy trust disabled explicitly")
     check("kind: synapse" in mas and "endpoint: http://synapse:8008" in mas, "MAS committed loader options")
@@ -586,6 +666,7 @@ def validate_rendered(path: Path) -> None:
 
     document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs)
     check(isinstance(document, dict) and set(document) == {"name", "services", "networks", "secrets"}, "Compose document shape")
+    validate_mas_listeners((ROOT / "mas.yaml").read_text(encoding="utf-8"))
     services, networks = document["services"], document["networks"]
     check(set(services) == set(SERVICES) and set(networks) == set({name for names in SERVICE_NETWORKS.values() for name in names}), "Compose topology")
     ingress_members = {service for service, settings in services.items() if CADDY_INGRESS_NETWORK in (settings.get("networks") or {})}
@@ -610,18 +691,16 @@ def validate_rendered(path: Path) -> None:
         for network, options in (settings.get("networks") or {}).items():
             options = options or {}
             allowed = set()
-            if service == "mas":
-                expected_aliases = {
-                    "edge_mas_net": ["mas-edge"],
-                    "synapse_mas_net": ["mas-synapse"],
-                    "plan_mas_net": ["mas-plan"],
-                    "mas_admin_net": ["mas-admin"],
-                }
-                if network in expected_aliases:
-                    allowed.add("aliases")
-                    check(options.get("aliases") == expected_aliases[network], (service, network, "network alias"))
-                else:
-                    check("aliases" not in options, (service, network, "unexpected network alias"))
+            if service == "mas" and network == "mas_admin_net":
+                allowed.add("aliases")
+                allowed.add("ipv4_address")
+                check(
+                    options == {"aliases": ["mas-admin"], "ipv4_address": MAS_ADMIN_ADDRESS},
+                    (service, network, "admin alias/address"),
+                )
+            else:
+                check("aliases" not in options, (service, network, "network alias"))
+                check("ipv4_address" not in options, (service, network, "unexpected static address"))
             if network == EGRESS_NETWORKS.get(service):
                 allowed.add("gw_priority")
                 check(options.get("gw_priority") == 1, (service, "egress priority"))
@@ -662,9 +741,10 @@ def validate_rendered(path: Path) -> None:
     )
     check(all("ports" not in services[s] for s in SERVICES if s != "caddy"), "unintended ports")
     for name, settings in networks.items():
+        expected_ipam = {"config": [{"subnet": MAS_ADMIN_SUBNET}]} if name == "mas_admin_net" else {}
         check(
             set(settings) <= {"internal", "name", "ipam"}
-            and settings.get("ipam", {}) == {},
+            and settings.get("ipam", {}) == expected_ipam,
             (name, "network options", settings),
         )
         if name in INTERNAL_NETWORKS:
@@ -718,7 +798,15 @@ def validate_rendered(path: Path) -> None:
     for service in ("caddy", "registration", "cashier"):
         # As with entrypoint above, Compose serializes an omitted command as null.
         check(services[service].get("command") is None, (service, "command override"))
-    check(services["mas"].get("networks", {}).get("mas_admin_net", {}).get("aliases") == ["mas-admin"], "MAS admin alias")
+    check(
+        "mas_admin_net" in services["mas"] and "mas_admin_net" in services["janitor"]
+        and "mas_admin_net" not in services["caddy"]
+        and networks["mas_admin_net"].get("internal") is True
+        and networks["mas_admin_net"].get("ipam") == {"config": [{"subnet": MAS_ADMIN_SUBNET}]}
+        and services["mas"]["networks"]["mas_admin_net"]
+        == {"aliases": ["mas-admin"], "ipv4_address": MAS_ADMIN_ADDRESS},
+        "MAS private admin network",
+    )
     check(services["janitor"].get("profiles") == ["janitor"] and services["janitor"].get("restart") == "no", "Janitor profile")
     check(all(services[s].get("restart") == "unless-stopped" for s in SERVICES if s != "janitor"), "service restart")
     print("Verified rendered Compose images, identity, topology, secrets, hardening, and listener invariants")

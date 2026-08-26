@@ -53,10 +53,19 @@ directly from `SERVER_NAME`, while billing mode derives only from `BILLING_ENVIR
 a separate provider or secret-file override.
 Registration has no host publication and is attached to a dedicated Caddy edge network plus its
 own outbound network; its public-URL calls do not expose it to the other application services.
-MAS's admin listener is bound to the private `mas_admin_net`, which contains only MAS and Janitor.
-MAS's internal/admin API listener is reached through the network-scoped `mas-admin` alias, which exists
-only on that private network. The pinned distroless MAS image's Compose healthcheck validates configuration
-only; it cannot prove that either listener is accepting connections. Janitor is therefore excluded
+MAS's internal/admin listener uses the supported `192.168.254.2:8081` socket address. Docker networks
+are its only transport paths: no MAS port is published on the host, and Caddy does not route the admin path.
+The MAS admin API remains credential-gated. The private `mas_admin_net`, which contains only MAS and
+Janitor, is Janitor's dedicated application path; other attached application peers cannot use the API
+without an authorized MAS client scope.
+The listener is bound only to MAS's static `192.168.254.2:8081` address on `mas_admin_net`; Compose
+reserves the minimal `192.168.254.0/29` private subnet for that path. The
+operator must check this subnet against host, VPN, and other Docker routes before activation because
+Docker cannot detect an overlap outside its own networks.
+Janitor resolves that fixed address through the sole remaining `mas-admin` Docker alias on
+`mas_admin_net`; this alias is name resolution only and is never used as a MAS socket bind.
+The pinned distroless MAS image's Compose healthcheck validates configuration only; its bundled tools
+cannot prove that either listener is accepting connections. Janitor is therefore excluded
 from the default Compose start. Harness checks OIDC discovery and Plan readiness before starting the
 one-shot `janitor` profile against the active exact state, without recreating or restarting MAS and
 with the equivalent of Compose `--no-deps`.
@@ -85,8 +94,9 @@ only the 16 MiB `/tmp` tmpfs is RAM-backed. Extending that ceiling further requi
 stream handling and end-to-end verification; it must not be raised by changing one setting.
 
 Administrative Synapse and MAS paths are deliberately unavailable through public ingress. MAS's
-administrator API is bound only to its private listener and network; it is not placed on the public
-web listener and is not routed by Caddy. The external TLS terminator must discard any
+administrator API is served on its separate internal listener/resource and is not placed on the
+public web resources or routed by Caddy. Its MAS authorization scope remains the security boundary
+for peers on attached Docker networks. The external TLS terminator must discard any
 client-supplied forwarding headers, then append the observed client address and
 `X-Forwarded-Proto: https` before forwarding to Caddy. Caddy strictly trusts only the exact
 configured proxy host address for forwarded protocol and client context; Registration receives no
@@ -94,9 +104,11 @@ derived client-IP identity header. The guarded activation must verify RootlessKi
 built-in TCP source-address propagation and rootless Docker's userland-proxy disabled, then prove the
 actual transport peer and forwarded-protocol behavior live; other rootless publish paths do not satisfy
 the Caddy `remote_ip` boundary.
-MAS's web listener binds only the network-scoped `mas-edge`, `mas-synapse`, and `mas-plan` endpoint
-aliases; its admin listener remains on `mas-admin` alone. Harness supplies the public URL and issuer
-in the final identity layer. MAS's `trusted_proxies` list is explicitly empty because that setting
+MAS's web listener uses the supported `[::]:8080` socket address. Docker network attachment controls
+which peers can reach each listener, while Caddy routes only the public web resources; no hostname
+aliases are used as MAS socket binds. Harness supplies the public URL and issuer in the final identity
+layer.
+MAS's `trusted_proxies` list is explicitly empty because that setting
 only controls whether MAS accepts `X-Forwarded-For` for client-IP rate limiting and logging; leaving
 it out would restore MAS's broad private-range defaults. MAS consequently sees Caddy as the source
 for those IP-based limits/logs, while peer services cannot spoof a client address through MAS.

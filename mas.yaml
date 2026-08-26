@@ -21,24 +21,19 @@ http:
         - name: graphql
         - name: assets
       binds:
-        # Bind only the three network endpoint addresses that need MAS's web resources. The
-        # aliases are network-scoped Compose DNS names; this avoids exposing the web listener on
-        # the private admin network or any future attachment without assigning fixed subnets.
-        - host: mas-edge
-          port: 8080
-        - host: mas-synapse
-          port: 8080
-        - host: mas-plan
-          port: 8080
+        # This deployment uses a socket address rather than Docker DNS names. Network attachment
+        # and Caddy routing provide the reachability boundary for this listener.
+        - address: '[::]:8080'
       proxy_protocol: false
 
     - name: internal
       resources:
-        - name: adminapi       # REST admin API; reachable only on mas_admin_net
+        - name: adminapi       # REST admin API; authorization remains enforced by MAS
       binds:
-        # Compose gives MAS a network-scoped self-alias only on mas_admin_net, shared with Janitor.
-        - host: mas-admin
-          port: 8081
+        # The admin API is OAuth-client credential-gated by MAS. Docker networks are its only
+        # transport paths: there is no host publication and Caddy has no admin route. Bind only to
+        # MAS's static address on mas_admin_net; that network remains Janitor's dedicated path.
+        - address: '192.168.254.2:8081'
       proxy_protocol: false
 
   # Harness supplies public_base and issuer in the final identity layer; forwarded scheme/host do

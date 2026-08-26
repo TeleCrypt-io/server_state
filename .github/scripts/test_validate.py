@@ -103,8 +103,56 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertIn("synapse_mas_net:\n    internal: true", compose)
         self.assertIn("synapse_egress_net:\n  mas_egress_net:", compose)
-        self.assertIn("mas-synapse", compose)
+        for alias in ("mas-edge", "mas-synapse", "mas-plan"):
+            self.assertNotIn(alias, compose)
+        self.assertIn("mas-admin", compose)
         self.assertNotRegex(compose, r"(?s)synapse_mas_net:\s*\n\s*gw_priority:\s*1")
+
+    def test_mas_uses_supported_address_binds_and_keeps_admin_auth_boundary(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        mas = (root / "mas.yaml").read_text(encoding="utf-8")
+        validate.validate_mas_listeners(mas)
+        self.assertIn("- address: '[::]:8080'", mas)
+        self.assertIn("- address: '192.168.254.2:8081'", mas)
+        for alias in ("mas-edge", "mas-synapse", "mas-plan", "mas-admin"):
+            self.assertNotIn(alias, mas)
+
+        alias_mutation = mas.replace(
+            "- address: '[::]:8080'",
+            "- host: mas-edge\n          port: 8080",
+            1,
+        )
+        with self.assertRaises(AssertionError):
+            validate.validate_mas_listeners(alias_mutation)
+
+        document = yaml.safe_load((root / "compose.yml").read_text(encoding="utf-8"))
+        services = document["services"]
+        networks = document["networks"]
+        self.assertIn("mas_admin_net", services["mas"]["networks"])
+        self.assertIn("mas_admin_net", services["janitor"]["networks"])
+        self.assertNotIn("mas_admin_net", services["caddy"]["networks"])
+        self.assertTrue(networks["mas_admin_net"]["internal"])
+        self.assertEqual(
+            networks["mas_admin_net"]["ipam"],
+            {"config": [{"subnet": "192.168.254.0/29"}]},
+        )
+        self.assertEqual(
+            services["mas"]["networks"]["mas_admin_net"],
+            {"aliases": ["mas-admin"], "ipv4_address": "192.168.254.2"},
+        )
+        for network, options in services["mas"]["networks"].items():
+            if network != "mas_admin_net":
+                self.assertNotIn("aliases", options or {})
+
+        caddy = (root / "Caddyfile").read_text(encoding="utf-8")
+        admin_start = caddy.index("@mas_admin path /auth/api/admin /auth/api/admin/*")
+        admin = caddy[admin_start:]
+        self.assertIn('respond "Not Found" 404', admin)
+        self.assertNotIn("reverse_proxy", admin[: admin.index("\n\t}")])
+        self.assertIn("credential-gated", mas)
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        self.assertIn("no MAS port is published", readme)
+        self.assertIn("Caddy does not route the admin path", readme)
 
     def test_caddy_has_single_normal_bridge_ingress_network(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "compose.yml"

@@ -24,6 +24,7 @@ services:
     image: ${CADDY_IMAGE:?set CADDY_IMAGE}
     restart: unless-stopped
     networks:
+      caddy_ingress_net:
       edge_synapse_net:
       edge_mas_net:
       edge_registration_net:
@@ -303,6 +304,9 @@ secrets:
 # attached only to their documented service. Synapse and MAS keep separate egress paths so neither
 # service can reach external destinations through the other's network.
 networks:
+  # A normal bridge is required for Docker to materialize Caddy's host publish. It is attached
+  # only to Caddy; all application-facing edge and peer networks remain internal below.
+  caddy_ingress_net:
   edge_synapse_net:
     internal: true
   edge_mas_net:

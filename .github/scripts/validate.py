@@ -34,7 +34,7 @@ SERVICE_IMAGES = {
     "plan": "CONTROLPLANE_IMAGE", "cashier": "CASHIER_IMAGE",
 }
 SERVICE_NETWORKS = {
-    "caddy": {"edge_synapse_net", "edge_mas_net", "edge_registration_net", "edge_plan_net", "edge_cashier_net"},
+    "caddy": {"caddy_ingress_net", "edge_synapse_net", "edge_mas_net", "edge_registration_net", "edge_plan_net", "edge_cashier_net"},
     "synapse": {"edge_synapse_net", "synapse_mas_net", "synapse_egress_net", "cashier_synapse_net"},
     "mas": {"edge_mas_net", "synapse_mas_net", "mas_egress_net", "plan_mas_net", "mas_admin_net"},
     "registration": {"edge_registration_net", "registration_egress_net"},
@@ -42,6 +42,7 @@ SERVICE_NETWORKS = {
     "plan": {"edge_plan_net", "plan_mas_net", "plan_cashier_net"},
     "cashier": {"edge_cashier_net", "plan_cashier_net", "cashier_synapse_net", "cashier_egress_net"},
 }
+CADDY_INGRESS_NETWORK = "caddy_ingress_net"
 INTERNAL_NETWORKS = {
     "edge_synapse_net", "edge_mas_net", "edge_registration_net", "edge_plan_net", "edge_cashier_net",
     "synapse_mas_net", "cashier_synapse_net", "plan_cashier_net", "plan_mas_net", "mas_admin_net",
@@ -229,6 +230,33 @@ def service_section(compose: str, service: str) -> str:
     return found.group("body")
 
 
+def service_network_names(service_body: str) -> set[str]:
+    found = re.search(r"(?m)^    networks:\n(?P<body>(?:^      .*(?:\n|\Z))*)", service_body)
+    check(found, "missing service networks")
+    names = re.findall(r"^      ([a-z][a-z0-9_-]*):(?:[ \t].*)?$", found.group("body"), re.MULTILINE)
+    check(len(names) == len(set(names)), "duplicate service network")
+    return set(names)
+
+
+def validate_source_topology(compose: str, sections: dict[str, str]) -> None:
+    for service, expected in SERVICE_NETWORKS.items():
+        check(service_network_names(sections[service]) == expected, (service, "networks"))
+
+    networks_start = compose.index("\nnetworks:")
+    networks_text = compose[networks_start:]
+    matches = list(re.finditer(r"(?m)^  ([a-z][a-z0-9_-]*):[ \t]*$", networks_text))
+    blocks = {
+        match.group(1): networks_text[match.end(): (matches[index + 1].start() if index + 1 < len(matches) else len(networks_text))]
+        for index, match in enumerate(matches)
+    }
+    expected_networks = set().union(*SERVICE_NETWORKS.values())
+    check(len(matches) == len(blocks) and set(blocks) == expected_networks, "network declarations")
+    for name, body in blocks.items():
+        internal = re.search(r"(?m)^    internal:[ \t]*true[ \t]*$", body) is not None
+        check(internal is (name in INTERNAL_NETWORKS), (name, "internal"))
+    check(CADDY_INGRESS_NETWORK in blocks and CADDY_INGRESS_NETWORK not in INTERNAL_NETWORKS, "Caddy ingress network")
+
+
 def validate_manifest_negative(values: dict[str, str]) -> None:
     base = [f"{key}={value}" for key, value in values.items()]
     mutations = (base + ["EXTRA_IMAGE=docker.io/caddy:1.0.0-alpine"], base + [base[0]],
@@ -395,6 +423,7 @@ def validate_source(values: dict[str, str]) -> None:
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env = assignments(env_text)
     sections = {service: service_section(compose, service) for service in SERVICES}
+    validate_source_topology(compose, sections)
     boundary = compose.index("\n# Compose file-backed secrets")
     check(set(re.findall(r"(?m)^  ([a-z][a-z0-9_-]*):$", compose[:boundary])) == set(SERVICES), "service set")
     for service, key in SERVICE_IMAGES.items():
@@ -559,6 +588,9 @@ def validate_rendered(path: Path) -> None:
     check(isinstance(document, dict) and set(document) == {"name", "services", "networks", "secrets"}, "Compose document shape")
     services, networks = document["services"], document["networks"]
     check(set(services) == set(SERVICES) and set(networks) == set({name for names in SERVICE_NETWORKS.values() for name in names}), "Compose topology")
+    ingress_members = {service for service, settings in services.items() if CADDY_INGRESS_NETWORK in (settings.get("networks") or {})}
+    check(ingress_members == {"caddy"}, "Caddy ingress network ownership")
+    check(networks[CADDY_INGRESS_NETWORK].get("internal", False) is False, "Caddy ingress network is non-internal")
     env_text = (ROOT / ".env.example").read_text(encoding="utf-8")
     env = assignments(env_text)
     manifest = load_manifest()

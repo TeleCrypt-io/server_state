@@ -106,6 +106,34 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("mas-synapse", compose)
         self.assertNotRegex(compose, r"(?s)synapse_mas_net:\s*\n\s*gw_priority:\s*1")
 
+    def test_caddy_has_single_normal_bridge_ingress_network(self) -> None:
+        compose_path = Path(__file__).resolve().parents[2] / "compose.yml"
+        compose = compose_path.read_text(encoding="utf-8")
+        document = yaml.safe_load(compose)
+        services = document["services"]
+        networks = document["networks"]
+
+        self.assertEqual(validate.CADDY_INGRESS_NETWORK, "caddy_ingress_net")
+        self.assertIn(validate.CADDY_INGRESS_NETWORK, services["caddy"]["networks"])
+        self.assertEqual(
+            [name for name, settings in services.items() if validate.CADDY_INGRESS_NETWORK in settings.get("networks", {})],
+            ["caddy"],
+        )
+        self.assertEqual(networks[validate.CADDY_INGRESS_NETWORK], None)
+        self.assertNotIn(validate.CADDY_INGRESS_NETWORK, validate.INTERNAL_NETWORKS)
+        self.assertEqual(len(services["caddy"]["ports"]), 1)
+        self.assertEqual(services["caddy"]["ports"][0]["target"], 8080)
+        self.assertEqual(services["caddy"]["ports"][0]["published"], 8080)
+        self.assertTrue(all("ports" not in settings for name, settings in services.items() if name != "caddy"))
+        for name, settings in networks.items():
+            if name in validate.INTERNAL_NETWORKS:
+                self.assertTrue(settings["internal"], name)
+            else:
+                self.assertIsNone(settings, name)
+
+        sections = {service: validate.service_section(compose, service) for service in validate.SERVICES}
+        validate.validate_source_topology(compose, sections)
+
     def test_matrix_private_layers_own_complete_shallow_merged_maps(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         synapse = (Path(__file__).resolve().parents[2] / "synapse.yaml").read_text(encoding="utf-8")
@@ -1188,7 +1216,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("phase=tag-ref", result.stderr)
             self.assertIn("repository=TeleCrypt-io/telecrypt-synapse", result.stderr)
-            self.assertIn("tag=1.159-tc8", result.stderr)
+            self.assertIn("tag=1.159-tc9", result.stderr)
             self.assertNotIn("offline-test-token", result.stdout + result.stderr)
 
     def test_release_workflow_uses_bounded_machine_http_status_checks(self) -> None:

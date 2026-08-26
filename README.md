@@ -66,7 +66,7 @@ capability, so Caddy alone adds back that exact capability inside its container 
 it grants no host privilege, and every other service remains capability-free. Each root filesystem
 is read-only; only Caddy's two private temporary directories, Synapse's UID-991 `/tmp`, and
 Synapse's disposable staging/cache mount are writable. Only Caddy publishes the unprivileged 8080
-ingress port. It reaches each routed upstream through a
+ingress port through its dedicated normal bridge network. It reaches each routed upstream through a
 dedicated internal edge network; Synapse and MAS share only their required peer network, Plan shares
 only its MAS and Cashier peer networks, Synapse and MAS share only the internal `synapse_mas_net` peer
 network (retaining Compose service DNS) and use separate non-internal `synapse_egress_net` and

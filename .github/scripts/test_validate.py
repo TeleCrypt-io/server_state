@@ -112,6 +112,7 @@ class ManifestTests(unittest.TestCase):
         synapse_document = yaml.safe_load(synapse)
         mas = (Path(__file__).resolve().parents[2] / "mas.yaml").read_text(encoding="utf-8")
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
         mas_fixture = (Path(__file__).resolve().parents[1] / "fixtures" / "mas.secrets.json").read_text(encoding="utf-8")
         synapse_fixture = yaml.safe_load(
             (Path(__file__).resolve().parents[1] / "fixtures" / "synapse.secrets.json").read_text(encoding="utf-8")
@@ -142,6 +143,13 @@ class ManifestTests(unittest.TestCase):
             synapse_fixture["matrix_authentication_service"],
             {"enabled": True, "endpoint": "http://mas:8080", "secret": "ci-matrix-secret"},
         )
+        self.assertEqual(
+            synapse_fixture["media_storage_providers"][0]["config"]["endpoint_url"],
+            "https://sss.telecrypt.io",
+        )
+        self.assertIn("reachable only from the production VM", synapse)
+        self.assertIn("reachable only from the production VM", readme)
+        self.assertNotIn("s3.telecrypt.io", synapse + workflow + readme)
         self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)

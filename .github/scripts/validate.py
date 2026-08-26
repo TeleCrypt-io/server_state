@@ -462,6 +462,7 @@ def validate_source(values: dict[str, str]) -> None:
     synapse_fixture = json.loads(
         (ROOT / ".github" / "fixtures" / "synapse.secrets.json").read_text(encoding="utf-8")
     )
+    synapse_media_providers = synapse_fixture.get("media_storage_providers")
     check(
         not re.search(r"^\s*database:\s*$", synapse, re.MULTILINE)
         and not re.search(r"^\s*matrix_authentication_service:\s*$", synapse, re.MULTILINE)
@@ -471,6 +472,11 @@ def validate_source(values: dict[str, str]) -> None:
         == {"user", "password", "database", "host", "port", "sslmode", "connect_timeout"}
         and synapse_fixture.get("matrix_authentication_service")
         == {"enabled": True, "endpoint": "http://mas:8080", "secret": "ci-matrix-secret"}
+        and isinstance(synapse_media_providers, list)
+        and len(synapse_media_providers) == 1
+        and synapse_media_providers[0].get("config", {}).get("endpoint_url")
+        == "https://sss.telecrypt.io"
+        and "reachable only from the production VM" in synapse
         and "media_store_path: /staging/media" in synapse,
         "Synapse complete private loader maps",
     )

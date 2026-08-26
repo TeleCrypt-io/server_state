@@ -8,8 +8,9 @@ Public runtime configuration for the TeleCrypt Matrix service:
 - Caddy HTTP ingress behind an external TLS terminator.
 - TeleCrypt services (Registration, Janitor, and Plan) plus private Cashier. Registration, Janitor,
   and Plan run from the `controlplane` image; the image/repository name is retained for release identity.
-- External PostgreSQL and S3-backed media storage; the provider synchronously stores local uploads
-  in S3 while remote-media fetching is disabled. The VM's
+- External PostgreSQL and S3-backed media storage at `sss.telecrypt.io`; the storage endpoint is
+  reachable only from the production VM. The provider synchronously stores local uploads in S3
+  while remote-media fetching is disabled. The VM's
   `${TELECRYPT_DATA_DIR}/runtime/synapse-staging` directory is disposable staging/cache, not a
   durable media authority; the image entrypoint clears only that fixed mount at startup.
 

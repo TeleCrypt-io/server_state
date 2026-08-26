@@ -344,6 +344,17 @@ class CaddyRouteTests(unittest.TestCase):
         self.assertIn('respond "Method Not Allowed" 405', handle)
         self.assertNotIn("reverse_proxy", handle)
 
+    def test_closed_federation_discovery_is_direct_all_method_404(self) -> None:
+        start = self.caddy.index("handle /.well-known/matrix/server {")
+        end = self.caddy.index("\n\t}", start)
+        handle = self.caddy[start:end]
+        self.assertLess(start, self.caddy.index("@production_apex"))
+        self.assertIn('respond "Not Found" 404', handle)
+        self.assertNotIn("method ", handle)
+        self.assertNotIn("redir ", handle)
+        self.assertNotIn("reverse_proxy", handle)
+        self.assertNotIn("Location", handle)
+
 
 class GitTransportTests(unittest.TestCase):
     def test_transport_retains_the_runner_system_ca_store(self) -> None:

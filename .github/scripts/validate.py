@@ -262,6 +262,20 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     check(caddy.index("@mas_compat_other_method") < caddy.index("\t@synapse path_regexp"), "MAS rejection order")
     check("@mas path /auth /auth/*" in caddy, "OAuth routes")
     check("method GET" in matcher("well_known_client") and "path /.well-known/matrix/client" in caddy, "discovery")
+    federation_discovery = re.search(
+        r'(?ms)^\thandle /\.well-known/matrix/server \{.*?^\t\}',
+        caddy,
+    )
+    check(
+        federation_discovery
+        and 'respond "Not Found" 404' in federation_discovery.group(0)
+        and "method " not in federation_discovery.group(0)
+        and "redir " not in federation_discovery.group(0)
+        and "reverse_proxy" not in federation_discovery.group(0)
+        and "Location" not in federation_discovery.group(0)
+        and federation_discovery.start() < caddy.index("@production_apex"),
+        "closed-federation discovery rejection",
+    )
     agents = matcher("agents_post")
     check("method POST" in agents and "path /agents" in agents, "registration")
     check("path /agents" in matcher("agents_other_method") and "not method POST" in matcher("agents_other_method"), "registration rejection")
@@ -349,6 +363,21 @@ def validate_caddy_negative(caddy: str, body: str) -> None:
         ),
         caddy.replace("\t\tmax_size 32KiB\n", "\t\tmax_size 128MiB\n", 1),
         caddy.replace("\t\tmethod GET\n\t\tpath /.well-known/matrix/client", "\t\tmethod POST\n\t\tpath /.well-known/matrix/client", 1),
+        caddy.replace(
+            '\thandle /.well-known/matrix/server {\n\t\trespond "Not Found" 404\n\t}\n',
+            "",
+            1,
+        ),
+        caddy.replace(
+            '\t\trespond "Not Found" 404\n\t}\n\n\t# The public website exists only',
+            '\t\trespond "Not Found" 404\n\t\treverse_proxy synapse:8008\n\t}\n\n\t# The public website exists only',
+            1,
+        ),
+        caddy.replace(
+            '\t\trespond "Not Found" 404\n\t}\n\n\t# The public website exists only',
+            '\t\trespond "Not Found" 404\n\t\tredir https://www.telecrypt.io 301\n\t}\n\n\t# The public website exists only',
+            1,
+        ),
         caddy.replace("\timport ingress_peer_gate\n", "", 1),
     )
     for candidate in mutations:

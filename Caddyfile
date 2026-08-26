@@ -101,7 +101,11 @@ http://{$SERVER_NAME}:8080 {
 		}`
 	}
 
-	# No /.well-known/matrix/server — federation is disabled.
+	# Federation is disabled. Return the discovery endpoint directly instead of allowing the
+	# production apex redirect to advertise or delegate a federation target.
+	handle /.well-known/matrix/server {
+		respond "Not Found" 404
+	}
 
 	# The public website exists only for the production profile. Match the literal production
 	# identity so a stage deployment cannot redirect users or credentials into production.

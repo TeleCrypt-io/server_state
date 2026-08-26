@@ -10,7 +10,7 @@
 #     purpose-specific networks and egress is isolated per service where required. Compose's
 #     `gw_priority: 1` is used only on the five non-internal egress attachments below and requires
 #     Docker Engine 28+ with Compose 2.33.1+.
-#   - MAS uses supported socket-address binds for its separate web and internal/admin listeners;
+#   - MAS uses supported IPv4 socket-address binds for its separate web and internal/admin listeners;
 #     MAS and Janitor share a deterministic /29 private admin network for Janitor's operation, and
 #     no MAS port is published on the host. The selected subnet must not overlap host/VPN routes.
 #   - Media is stored in external S3; PostgreSQL is external to this Compose project.

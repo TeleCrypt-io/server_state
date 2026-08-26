@@ -21,9 +21,10 @@ http:
         - name: graphql
         - name: assets
       binds:
-        # This deployment uses a socket address rather than Docker DNS names. Network attachment
-        # and Caddy routing provide the reachability boundary for this listener.
-        - address: '[::]:8080'
+        # Use MAS's official IPv4 wildcard socket address; network attachment and Caddy routing
+        # provide the reachability boundary for this listener without requiring IPv6 in the
+        # container namespace.
+        - address: '0.0.0.0:8080'
       proxy_protocol: false
 
     - name: internal

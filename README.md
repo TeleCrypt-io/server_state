@@ -104,10 +104,10 @@ derived client-IP identity header. The guarded activation must verify RootlessKi
 built-in TCP source-address propagation and rootless Docker's userland-proxy disabled, then prove the
 actual transport peer and forwarded-protocol behavior live; other rootless publish paths do not satisfy
 the Caddy `remote_ip` boundary.
-MAS's web listener uses the supported `[::]:8080` socket address. Docker network attachment controls
-which peers can reach each listener, while Caddy routes only the public web resources; no hostname
-aliases are used as MAS socket binds. Harness supplies the public URL and issuer in the final identity
-layer.
+MAS's web listener uses the supported IPv4-only `0.0.0.0:8080` socket address, so it does not require
+IPv6 in the container namespace. Docker network attachment controls which peers can reach each
+listener, while Caddy routes only the public web resources; no hostname aliases are used as MAS
+socket binds. Harness supplies the public URL and issuer in the final identity layer.
 MAS's `trusted_proxies` list is explicitly empty because that setting
 only controls whether MAS accepts `X-Forwarded-For` for client-IP rate limiting and logging; leaving
 it out would restore MAS's broad private-range defaults. MAS consequently sees Caddy as the source

@@ -108,17 +108,17 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("mas-admin", compose)
         self.assertNotRegex(compose, r"(?s)synapse_mas_net:\s*\n\s*gw_priority:\s*1")
 
-    def test_mas_uses_supported_address_binds_and_keeps_admin_auth_boundary(self) -> None:
+    def test_mas_uses_supported_ipv4_address_binds_and_keeps_admin_auth_boundary(self) -> None:
         root = Path(__file__).resolve().parents[2]
         mas = (root / "mas.yaml").read_text(encoding="utf-8")
         validate.validate_mas_listeners(mas)
-        self.assertIn("- address: '[::]:8080'", mas)
+        self.assertIn("- address: '0.0.0.0:8080'", mas)
         self.assertIn("- address: '192.168.254.2:8081'", mas)
         for alias in ("mas-edge", "mas-synapse", "mas-plan", "mas-admin"):
             self.assertNotIn(alias, mas)
 
         alias_mutation = mas.replace(
-            "- address: '[::]:8080'",
+            "- address: '0.0.0.0:8080'",
             "- host: mas-edge\n          port: 8080",
             1,
         )

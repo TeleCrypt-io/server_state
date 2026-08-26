@@ -123,7 +123,7 @@ FORBIDDEN_SERVICE_KEYS = {"privileged", "network_mode", "pid", "ipc", "devices",
 MIN_DOCKER_ENGINE = (28, 0, 0)
 MIN_COMPOSE = (2, 33, 1)
 MAS_LISTENER_BINDINGS = {
-    "web": "[::]:8080",
+    "web": "0.0.0.0:8080",
     "internal": "192.168.254.2:8081",
 }
 MAS_LISTENER_RESOURCES = {
@@ -260,9 +260,9 @@ def service_network_options(service_body: str, network: str) -> str:
 def validate_mas_listeners(mas: str) -> None:
     """Require MAS's supported socket-address listener contract.
 
-    This deployment uses socket addresses rather than the Docker network self-aliases that produced
-    zero listeners in production. Network attachment and resource selection provide the reachability
-    boundary instead.
+    This deployment uses the official IPv4 wildcard web socket and fixed IPv4 admin socket rather
+    than Docker network self-aliases. Network attachment and resource selection provide the
+    reachability boundary instead.
     """
     listener_matches = list(re.finditer(
         r"(?ms)^    - name: (?P<name>[a-z][a-z0-9_-]*)\n(?P<body>.*?)(?=^    - name: |\n  trusted_proxies:)",

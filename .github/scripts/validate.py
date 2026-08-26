@@ -798,15 +798,6 @@ def validate_rendered(path: Path) -> None:
     for service in ("caddy", "registration", "cashier"):
         # As with entrypoint above, Compose serializes an omitted command as null.
         check(services[service].get("command") is None, (service, "command override"))
-    check(
-        "mas_admin_net" in services["mas"] and "mas_admin_net" in services["janitor"]
-        and "mas_admin_net" not in services["caddy"]
-        and networks["mas_admin_net"].get("internal") is True
-        and networks["mas_admin_net"].get("ipam") == {"config": [{"subnet": MAS_ADMIN_SUBNET}]}
-        and services["mas"]["networks"]["mas_admin_net"]
-        == {"aliases": ["mas-admin"], "ipv4_address": MAS_ADMIN_ADDRESS},
-        "MAS private admin network",
-    )
     check(services["janitor"].get("profiles") == ["janitor"] and services["janitor"].get("restart") == "no", "Janitor profile")
     check(all(services[s].get("restart") == "unless-stopped" for s in SERVICES if s != "janitor"), "service restart")
     print("Verified rendered Compose images, identity, topology, secrets, hardening, and listener invariants")

@@ -53,9 +53,10 @@ directly from `SERVER_NAME`, while billing mode derives only from `BILLING_ENVIR
 a separate provider or secret-file override.
 Registration has no host publication and is attached to a dedicated Caddy edge network plus its
 own outbound network; its public-URL calls do not expose it to the other application services.
-MAS's internal/admin listener uses the supported `192.168.254.2:8081` socket address. Docker networks
-are its only transport paths: no MAS port is published on the host, and Caddy does not route the admin path.
-The MAS admin API remains credential-gated. The private `mas_admin_net`, which contains only MAS and
+MAS's private internal listener uses the supported `192.168.254.2:8081` socket address for the
+credential-gated admin API and Janitor's OAuth token endpoint. Docker networks are its only transport
+paths: no MAS port is published on the host, and Caddy does not route this private path. The private
+`mas_admin_net`, which contains only MAS and
 Janitor, is Janitor's dedicated application path; other attached application peers cannot use the API
 without an authorized MAS client scope.
 The listener is bound only to MAS's static `192.168.254.2:8081` address on `mas_admin_net`; Compose

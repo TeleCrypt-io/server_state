@@ -128,7 +128,7 @@ MAS_LISTENER_BINDINGS = {
 }
 MAS_LISTENER_RESOURCES = {
     "web": ["discovery", "human", "oauth", "compat", "graphql", "assets"],
-    "internal": ["adminapi"],
+    "internal": ["adminapi", "oauth"],
 }
 MAS_ADMIN_SUBNET = "192.168.254.0/29"
 MAS_ADMIN_ADDRESS = "192.168.254.2"
@@ -305,9 +305,10 @@ def validate_network_subnets(actual: dict[str, str]) -> None:
 def validate_mas_listeners(mas: str) -> None:
     """Require MAS's supported socket-address listener contract.
 
-    This deployment uses the official IPv4 wildcard web socket and fixed IPv4 admin socket rather
-    than Docker network self-aliases. Network attachment and resource selection provide the
-    reachability boundary instead.
+    This deployment uses the official IPv4 wildcard web socket and fixed IPv4 internal socket
+    rather than Docker network self-aliases. Network attachment and resource selection provide the
+    reachability boundary instead; the private listener exposes only the admin API and Janitor's
+    OAuth token endpoint.
     """
     listener_matches = list(re.finditer(
         r"(?ms)^    - name: (?P<name>[a-z][a-z0-9_-]*)\n(?P<body>.*?)(?=^    - name: |\n  trusted_proxies:)",
@@ -644,6 +645,7 @@ def validate_source(values: dict[str, str]) -> None:
     validate_mas_admin_network(compose, sections)
     check(
         "- name: adminapi" in mas
+        and "- name: oauth" in mas
         and "- name: health" not in mas
         and "mas_admin_net" in sections["mas"]
         and "mas_admin_net" in sections["janitor"]

@@ -30,10 +30,12 @@ http:
     - name: internal
       resources:
         - name: adminapi       # REST admin API; authorization remains enforced by MAS
+        - name: oauth          # Janitor's client-credentials token endpoint; no public route
       binds:
-        # The admin API is OAuth-client credential-gated by MAS. Docker networks are its only
-        # transport paths: there is no host publication and Caddy has no admin route. Bind only to
-        # MAS's static address on mas_admin_net; that network remains Janitor's dedicated path.
+        # The admin API and Janitor's token endpoint are credential-gated by MAS. Docker networks
+        # are their only transport paths: there is no host publication and Caddy has no private
+        # route. Bind only to MAS's static address on mas_admin_net; that network remains Janitor's
+        # dedicated path.
         - address: '192.168.254.2:8081'
       proxy_protocol: false
 

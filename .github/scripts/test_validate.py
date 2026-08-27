@@ -113,6 +113,11 @@ class ManifestTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         mas = (root / "mas.yaml").read_text(encoding="utf-8")
         validate.validate_mas_listeners(mas)
+        self.assertEqual(
+            validate.MAS_LISTENER_RESOURCES["web"],
+            ["discovery", "human", "oauth", "compat", "graphql", "assets"],
+        )
+        self.assertEqual(validate.MAS_LISTENER_RESOURCES["internal"], ["adminapi", "oauth"])
         self.assertIn("- address: '0.0.0.0:8080'", mas)
         self.assertIn("- address: '192.168.254.2:8081'", mas)
         for alias in ("mas-edge", "mas-synapse", "mas-plan", "mas-admin"):
@@ -125,6 +130,16 @@ class ManifestTests(unittest.TestCase):
         )
         with self.assertRaises(AssertionError):
             validate.validate_mas_listeners(alias_mutation)
+
+        internal_oauth = "        - name: oauth          # Janitor's client-credentials token endpoint; no public route\n"
+        with self.assertRaises(AssertionError):
+            validate.validate_mas_listeners(mas.replace(internal_oauth, "", 1))
+        with self.assertRaises(AssertionError):
+            validate.validate_mas_listeners(mas.replace(internal_oauth, internal_oauth + "        - name: health\n", 1))
+        with self.assertRaises(AssertionError):
+            validate.validate_mas_listeners(mas.replace("        - name: oauth\n", "", 1))
+        with self.assertRaises(AssertionError):
+            validate.validate_mas_listeners(mas.replace("        - name: assets\n", "        - name: assets\n        - name: health\n", 1))
 
         document = yaml.safe_load((root / "compose.yml").read_text(encoding="utf-8"))
         services = document["services"]
@@ -153,7 +168,7 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("credential-gated", mas)
         readme = (root / "README.md").read_text(encoding="utf-8")
         self.assertIn("no MAS port is published", readme)
-        self.assertIn("Caddy does not route the admin path", readme)
+        self.assertIn("Caddy does not route this private path", readme)
 
     def test_caddy_has_single_normal_bridge_ingress_network(self) -> None:
         compose_path = Path(__file__).resolve().parents[2] / "compose.yml"

@@ -1264,7 +1264,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("phase=tag-ref", result.stderr)
             self.assertIn("repository=TeleCrypt-io/telecrypt-synapse", result.stderr)
-            self.assertIn("tag=1.159-tc9", result.stderr)
+            self.assertIn("tag=1.159-tc10", result.stderr)
             self.assertNotIn("offline-test-token", result.stdout + result.stderr)
 
     def test_release_workflow_uses_bounded_machine_http_status_checks(self) -> None:

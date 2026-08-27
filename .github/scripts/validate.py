@@ -578,6 +578,16 @@ def _adapted_contains_handler(value: object, names: set[str]) -> bool:
     return False
 
 
+def _adapted_contains_abort(value: object) -> bool:
+    if isinstance(value, dict):
+        if value.get("handler") == "static_response" and value.get("abort") is True:
+            return True
+        return any(_adapted_contains_abort(child) for child in value.values())
+    if isinstance(value, list):
+        return any(_adapted_contains_abort(child) for child in value)
+    return False
+
+
 def _adapted_untrusted_peer_match(value: object) -> bool:
     if not isinstance(value, dict):
         return False
@@ -605,7 +615,7 @@ def validate_adapted_caddy(path: Path) -> None:
             matchers = route.get("match")
             if not isinstance(matchers, list) or not any(_adapted_untrusted_peer_match(matcher) for matcher in matchers):
                 continue
-            check(_adapted_contains_handler(route.get("handle"), {"abort"}), "adapted ingress gate abort")
+            check(_adapted_contains_abort(route.get("handle")), "adapted ingress gate abort")
             terminal_index = next(
                 (
                     candidate

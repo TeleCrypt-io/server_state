@@ -512,7 +512,7 @@ class CaddyRouteTests(unittest.TestCase):
                     "match": [{"not": [{"remote_ip": {"ranges": ["192.0.2.10/32"]}}]}],
                     "handle": [{
                         "handler": "subroute",
-                        "routes": [{"handle": [{"handler": "abort"}]}],
+                        "routes": [{"handle": [{"handler": "static_response", "abort": True}]}],
                     }],
                 },
                 {

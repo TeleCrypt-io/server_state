@@ -102,7 +102,8 @@ class ManifestTests(unittest.TestCase):
             {"edge_mas_net", "synapse_mas_net", "mas_egress_net", "plan_mas_net", "mas_admin_net"},
         )
         self.assertIn("synapse_mas_net:\n    internal: true", compose)
-        self.assertIn("synapse_egress_net:\n  mas_egress_net:", compose)
+        self.assertIn("synapse_egress_net:\n    ipam:", compose)
+        self.assertIn("mas_egress_net:\n    ipam:", compose)
         for alias in ("mas-edge", "mas-synapse", "mas-plan"):
             self.assertNotIn(alias, compose)
         self.assertIn("mas-admin", compose)
@@ -167,7 +168,10 @@ class ManifestTests(unittest.TestCase):
             [name for name, settings in services.items() if validate.CADDY_INGRESS_NETWORK in settings.get("networks", {})],
             ["caddy"],
         )
-        self.assertEqual(networks[validate.CADDY_INGRESS_NETWORK], None)
+        self.assertEqual(
+            networks[validate.CADDY_INGRESS_NETWORK],
+            {"ipam": {"config": [{"subnet": validate.NETWORK_SUBNETS[validate.CADDY_INGRESS_NETWORK]}]}},
+        )
         self.assertNotIn(validate.CADDY_INGRESS_NETWORK, validate.INTERNAL_NETWORKS)
         self.assertEqual(len(services["caddy"]["ports"]), 1)
         self.assertEqual(services["caddy"]["ports"][0]["target"], 8080)
@@ -177,10 +181,47 @@ class ManifestTests(unittest.TestCase):
             if name in validate.INTERNAL_NETWORKS:
                 self.assertTrue(settings["internal"], name)
             else:
-                self.assertIsNone(settings, name)
+                self.assertFalse(settings.get("internal", False), name)
+            self.assertEqual(
+                settings["ipam"],
+                {"config": [{"subnet": validate.NETWORK_SUBNETS[name]}]},
+            )
 
         sections = {service: validate.service_section(compose, service) for service in validate.SERVICES}
         validate.validate_source_topology(compose, sections)
+
+    def test_network_ipam_contract_rejects_missing_wrong_duplicate_and_overlapping_subnets(self) -> None:
+        valid = dict(validate.NETWORK_SUBNETS)
+        validate.validate_network_subnets(valid)
+        mutations = {
+            "missing": lambda values: values.pop("edge_synapse_net"),
+            "wrong": lambda values: values.__setitem__("edge_synapse_net", "10.254.1.0/28"),
+            "duplicate": lambda values: values.__setitem__("edge_synapse_net", values["caddy_ingress_net"]),
+            "overlap": lambda values: values.__setitem__("edge_synapse_net", "10.254.0.8/29"),
+        }
+        for name, mutation in mutations.items():
+            with self.subTest(name=name):
+                candidate = dict(valid)
+                mutation(candidate)
+                with self.assertRaises(AssertionError):
+                    validate.validate_network_subnets(candidate)
+
+    def test_network_ipam_structural_invariants_are_enforced_independently(self) -> None:
+        valid = dict(validate.NETWORK_SUBNETS)
+        mutations = {
+            "outside project pool": ("edge_synapse_net", "10.254.1.0/28"),
+            "duplicate": ("edge_synapse_net", valid["caddy_ingress_net"]),
+            "overlap": ("edge_synapse_net", "10.254.0.8/29"),
+            "MAS admin in project pool": ("mas_admin_net", "10.254.0.240/29"),
+            "PostgreSQL LAN overlap": ("mas_admin_net", "192.168.10.0/29"),
+        }
+        for name, (network, subnet) in mutations.items():
+            with self.subTest(name=name):
+                candidate = dict(valid)
+                candidate[network] = subnet
+                with mock.patch.object(validate, "NETWORK_SUBNETS", candidate):
+                    with self.assertRaises(AssertionError):
+                        validate.validate_network_subnets(candidate)
 
     def test_matrix_private_layers_own_complete_shallow_merged_maps(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")

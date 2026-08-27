@@ -132,6 +132,26 @@ MAS_LISTENER_RESOURCES = {
 }
 MAS_ADMIN_SUBNET = "192.168.254.0/29"
 MAS_ADMIN_ADDRESS = "192.168.254.2"
+PROJECT_NETWORK_POOL = "10.254.0.0/24"
+POSTGRES_LAN = "192.168.10.0/24"
+NETWORK_SUBNETS = {
+    "caddy_ingress_net": "10.254.0.0/28",
+    "edge_synapse_net": "10.254.0.16/28",
+    "edge_mas_net": "10.254.0.32/28",
+    "edge_registration_net": "10.254.0.48/28",
+    "edge_plan_net": "10.254.0.64/28",
+    "edge_cashier_net": "10.254.0.80/28",
+    "synapse_mas_net": "10.254.0.96/28",
+    "synapse_egress_net": "10.254.0.112/28",
+    "mas_egress_net": "10.254.0.128/28",
+    "cashier_synapse_net": "10.254.0.144/28",
+    "plan_mas_net": "10.254.0.160/28",
+    "plan_cashier_net": "10.254.0.176/28",
+    "registration_egress_net": "10.254.0.192/28",
+    "cashier_egress_net": "10.254.0.208/28",
+    "janitor_egress_net": "10.254.0.224/28",
+    "mas_admin_net": MAS_ADMIN_SUBNET,
+}
 
 
 def check(condition: object, message: object) -> None:
@@ -257,6 +277,31 @@ def service_network_options(service_body: str, network: str) -> str:
     return found.group("body")
 
 
+def validate_network_subnets(actual: dict[str, str]) -> None:
+    check(set(actual) == set(NETWORK_SUBNETS), "network IPAM map")
+    pool = ipaddress.ip_network(PROJECT_NETWORK_POOL)
+    postgres_lan = ipaddress.ip_network(POSTGRES_LAN)
+    parsed = {}
+    for name, expected in NETWORK_SUBNETS.items():
+        subnet = actual.get(name)
+        check(subnet == expected, (name, "subnet", subnet))
+        try:
+            network = ipaddress.ip_network(subnet, strict=True)
+        except ValueError:
+            check(False, (name, "invalid subnet", subnet))
+        check(network.version == 4, (name, "IPv4 subnet", subnet))
+        if name == "mas_admin_net":
+            check(not network.overlaps(pool), (name, "project pool overlap"))
+        else:
+            check(network.subnet_of(pool), (name, "project pool membership", subnet))
+        check(not network.overlaps(postgres_lan), (name, "PostgreSQL LAN overlap", subnet))
+        parsed[name] = network
+    names = list(parsed)
+    for index, left_name in enumerate(names):
+        for right_name in names[index + 1 :]:
+            check(not parsed[left_name].overlaps(parsed[right_name]), (left_name, right_name, "subnet overlap"))
+
+
 def validate_mas_listeners(mas: str) -> None:
     """Require MAS's supported socket-address listener contract.
 
@@ -331,9 +376,14 @@ def validate_source_topology(compose: str, sections: dict[str, str]) -> None:
     }
     expected_networks = set().union(*SERVICE_NETWORKS.values())
     check(len(matches) == len(blocks) and set(blocks) == expected_networks, "network declarations")
+    actual_subnets = {}
     for name, body in blocks.items():
         internal = re.search(r"(?m)^    internal:[ \t]*true[ \t]*$", body) is not None
         check(internal is (name in INTERNAL_NETWORKS), (name, "internal"))
+        subnets = re.findall(r"(?m)^        - subnet: ([^\s]+)[ \t]*$", body)
+        check(len(subnets) == 1, (name, "IPAM subnet"))
+        actual_subnets[name] = subnets[0]
+    validate_network_subnets(actual_subnets)
     check(CADDY_INGRESS_NETWORK in blocks and CADDY_INGRESS_NETWORK not in INTERNAL_NETWORKS, "Caddy ingress network")
 
 
@@ -740,19 +790,23 @@ def validate_rendered(path: Path) -> None:
         port,
     )
     check(all("ports" not in services[s] for s in SERVICES if s != "caddy"), "unintended ports")
+    actual_subnets = {}
     for name, settings in networks.items():
-        expected_ipam = {"config": [{"subnet": MAS_ADMIN_SUBNET}]} if name == "mas_admin_net" else {}
+        expected_subnet = NETWORK_SUBNETS[name]
+        expected_ipam = {"config": [{"subnet": expected_subnet}]}
         check(
             set(settings) <= {"internal", "name", "ipam"}
             and settings.get("ipam", {}) == expected_ipam,
             (name, "network options", settings),
         )
+        actual_subnets[name] = settings["ipam"]["config"][0]["subnet"]
         if name in INTERNAL_NETWORKS:
             check(settings.get("internal") is True, (name, "internal"))
         else:
             check(settings.get("internal", False) is False, (name, "egress"))
         if "name" in settings:
             check(settings["name"] == f"{document['name']}_{name}", (name, "network name"))
+    validate_network_subnets(actual_subnets)
     check(set(document["secrets"]) == set(SECRET_FILES), "secret set")
     expected_secret_files = {name: f"{data_dir}/secrets/{filename}" for name, filename in SECRET_FILES.items()}
     for name, expected_file in expected_secret_files.items():

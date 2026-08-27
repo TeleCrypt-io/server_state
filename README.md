@@ -59,9 +59,16 @@ The MAS admin API remains credential-gated. The private `mas_admin_net`, which c
 Janitor, is Janitor's dedicated application path; other attached application peers cannot use the API
 without an authorized MAS client scope.
 The listener is bound only to MAS's static `192.168.254.2:8081` address on `mas_admin_net`; Compose
-reserves the minimal `192.168.254.0/29` private subnet for that path. The
-operator must check this subnet against host, VPN, and other Docker routes before activation because
-Docker cannot detect an overlap outside its own networks.
+reserves the minimal `192.168.254.0/29` private subnet for that path. The other 15 project networks
+use one explicit `/28` each from the project-only `10.254.0.0/24` pool, in declaration order:
+`caddy_ingress_net` `.0`, `edge_synapse_net` `.16`, `edge_mas_net` `.32`, `edge_registration_net`
+`.48`, `edge_plan_net` `.64`, `edge_cashier_net` `.80`, `synapse_mas_net` `.96`,
+`synapse_egress_net` `.112`, `mas_egress_net` `.128`, `cashier_synapse_net` `.144`, `plan_mas_net`
+`.160`, `plan_cashier_net` `.176`, `registration_egress_net` `.192`, `cashier_egress_net` `.208`,
+and `janitor_egress_net` `.224`. Explicit IPAM prevents Docker's daemon-wide default address pool
+from silently selecting a subnet that overlaps the physical PostgreSQL LAN. The operator must still
+check both reserved blocks against host, VPN, and other Docker routes before activation because Docker
+cannot detect an overlap outside its own networks.
 Janitor resolves that fixed address through the sole remaining `mas-admin` Docker alias on
 `mas_admin_net`; this alias is name resolution only and is never used as a MAS socket bind.
 The pinned distroless MAS image's Compose healthcheck validates configuration only; its bundled tools

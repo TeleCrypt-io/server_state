@@ -12,7 +12,8 @@
 #     Docker Engine 28+ with Compose 2.33.1+.
 #   - MAS uses supported IPv4 socket-address binds for its separate web and internal/admin listeners;
 #     MAS and Janitor share a deterministic /29 private admin network for Janitor's operation, and
-#     no MAS port is published on the host. The selected subnet must not overlap host/VPN routes.
+#     no MAS port is published on the host. Every project network has an explicit, unique IPAM
+#     subnet so Docker's daemon-wide default address pool cannot overlap the host/VPN routes.
 #   - Media is stored in external S3; PostgreSQL is external to this Compose project.
 
 services:
@@ -303,29 +304,74 @@ networks:
   # A normal bridge is required for Docker to materialize Caddy's host publish. It is attached
   # only to Caddy; all application-facing edge and peer networks remain internal below.
   caddy_ingress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.0/28
   edge_synapse_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.16/28
   edge_mas_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.32/28
   edge_registration_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.48/28
   edge_plan_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.64/28
   edge_cashier_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.80/28
   synapse_mas_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.96/28
   synapse_egress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.112/28
   mas_egress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.128/28
   cashier_synapse_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.144/28
   plan_mas_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.160/28
   plan_cashier_net:
     internal: true
+    ipam:
+      config:
+        - subnet: 10.254.0.176/28
   registration_egress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.192/28
   cashier_egress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.208/28
   janitor_egress_net:
+    ipam:
+      config:
+        - subnet: 10.254.0.224/28
   mas_admin_net:
     internal: true
     ipam:

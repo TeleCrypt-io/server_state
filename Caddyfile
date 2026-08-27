@@ -69,7 +69,9 @@
 	@untrusted_ingress_peer {
 		not remote_ip {$TRUSTED_PROXY}
 	}
-	abort @untrusted_ingress_peer
+	handle @untrusted_ingress_peer {
+		abort
+	}
 }
 
 # ── APEX (SERVER_NAME): well-known discovery + production-only landing redirect ─────────────────

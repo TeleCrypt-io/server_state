@@ -468,7 +468,14 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     check("http://{$SERVER_NAME}:8080" in caddy and "http://backend.{$SERVER_NAME}:8080" in caddy, "host identities")
     sites = re.findall(r"(?ms)^http://[^\n]+ \{.*?^\}", caddy)
     check(len(sites) == 2 and all("import ingress_peer_gate" in site and "import access_log" in site for site in sites), "ingress peer gate/logs")
-    check(caddy.count("not remote_ip {$TRUSTED_PROXY}") == 1 and caddy.count("abort @untrusted_ingress_peer") == 1, "immediate ingress peer gate")
+    check(caddy.count("not remote_ip {$TRUSTED_PROXY}") == 1, "immediate ingress peer matcher")
+    check(caddy.count("abort @untrusted_ingress_peer") == 0, "unmatched ingress abort")
+    gate = re.compile(r"(?ms)^\thandle @untrusted_ingress_peer \{\n\t\tabort\n\t\}")
+    check(len(gate.findall(caddy)) == 1, "matched ingress peer gate")
+    for site in sites:
+        gate_match = re.search(r"(?m)^\timport ingress_peer_gate$", site)
+        terminal = re.search(r"(?m)^\thandle \{\n", site)
+        check(gate_match and terminal and gate_match.start() < terminal.start(), "ingress gate route order")
     backend = caddy[caddy.index("http://backend.{$SERVER_NAME}:8080 {"):]
     check("@mas path /auth /auth/*" in backend and "@plan path /plan /plan/* /api/plan /api/plan/*" in backend, "backend routes")
     check(not re.search(r"(?i)frame-ancestors\s+(?:['\"]?\*['\"]?|https?://[^;[:space:]]+)", caddy), "frame policy")
@@ -545,6 +552,74 @@ def validate_caddy_negative(caddy: str, body: str) -> None:
         except (AssertionError, ValueError):
             continue
         raise AssertionError("Caddy policy mutation was accepted")
+
+
+def _adapted_route_lists(value: object):
+    if isinstance(value, dict):
+        routes = value.get("routes")
+        if isinstance(routes, list):
+            yield routes
+            yield from _adapted_route_lists(routes)
+        for key, child in value.items():
+            if key != "routes":
+                yield from _adapted_route_lists(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _adapted_route_lists(child)
+
+
+def _adapted_contains_handler(value: object, names: set[str]) -> bool:
+    if isinstance(value, dict):
+        if value.get("handler") in names:
+            return True
+        return any(_adapted_contains_handler(child, names) for child in value.values())
+    if isinstance(value, list):
+        return any(_adapted_contains_handler(child, names) for child in value)
+    return False
+
+
+def _adapted_untrusted_peer_match(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    negated = value.get("not")
+    if not isinstance(negated, list) or len(negated) != 1:
+        return False
+    peer_match = negated[0]
+    return (
+        isinstance(peer_match, dict)
+        and set(peer_match) == {"remote_ip"}
+        and isinstance(peer_match["remote_ip"], dict)
+        and set(peer_match["remote_ip"]) == {"ranges"}
+        and peer_match["remote_ip"]["ranges"] == ["192.0.2.10/32"]
+    )
+
+
+def validate_adapted_caddy(path: Path) -> None:
+    document = json.loads(path.read_text(encoding="utf-8"))
+    check(isinstance(document, dict), "adapted Caddy document shape")
+    checked = 0
+    for routes in _adapted_route_lists(document):
+        for index, route in enumerate(routes):
+            if not isinstance(route, dict):
+                continue
+            matchers = route.get("match")
+            if not isinstance(matchers, list) or not any(_adapted_untrusted_peer_match(matcher) for matcher in matchers):
+                continue
+            check(_adapted_contains_handler(route.get("handle"), {"abort"}), "adapted ingress gate abort")
+            terminal_index = next(
+                (
+                    candidate
+                    for candidate in range(index + 1, len(routes))
+                    if isinstance(routes[candidate], dict)
+                    and "match" not in routes[candidate]
+                    and _adapted_contains_handler(routes[candidate].get("handle"), {"static_response", "reverse_proxy", "file_server"})
+                ),
+                None,
+            )
+            check(terminal_index is not None and index < terminal_index, "adapted ingress gate route order")
+            checked += 1
+    check(checked == 2, ("adapted ingress gates", checked))
+    print("Verified adapted Caddy ingress peer gates before terminal fallbacks")
 
 
 def validate_source(values: dict[str, str]) -> None:
@@ -1198,7 +1273,7 @@ def validate_image_list(path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("manifest", "source", "rendered-compose", "image-list", "images", "image-release-manifest", "image-name", "toolchain"))
+    parser.add_argument("command", choices=("manifest", "source", "rendered-compose", "adapted-caddy", "image-list", "images", "image-release-manifest", "image-name", "toolchain"))
     parser.add_argument("path", nargs="?", type=Path)
     parser.add_argument("value", nargs="?")
     parser.add_argument("output", nargs="?", type=Path)
@@ -1212,6 +1287,9 @@ def main() -> None:
     elif args.command == "rendered-compose":
         check(args.path is not None, "rendered Compose JSON path required")
         validate_rendered(args.path)
+    elif args.command == "adapted-caddy":
+        check(args.path is not None, "adapted Caddy JSON path required")
+        validate_adapted_caddy(args.path)
     elif args.command == "image-list":
         check(args.path is not None, "image list path required")
         validate_image_list(args.path)

@@ -495,6 +495,60 @@ class CaddyRouteTests(unittest.TestCase):
         self.assertNotIn("reverse_proxy", handle)
         self.assertNotIn("Location", handle)
 
+    def test_ingress_peer_gate_is_a_matched_terminal_handle_before_fallback(self) -> None:
+        gate = "\thandle @untrusted_ingress_peer {\n\t\tabort\n\t}"
+        self.assertEqual(self.caddy.count(gate), 1)
+        self.assertNotIn("abort @untrusted_ingress_peer", self.caddy)
+        for site in re.findall(r"(?ms)^http://[^\n]+ \{.*?^\}", self.caddy):
+            self.assertIn("import ingress_peer_gate", site)
+            gate_start = site.index("\timport ingress_peer_gate\n")
+            fallback_start = site.index("\thandle {\n")
+            self.assertLess(gate_start, fallback_start)
+
+    def test_adapted_ingress_peer_gate_rejects_untrusted_before_terminal_fallback(self) -> None:
+        def site_routes() -> list[dict]:
+            return [
+                {
+                    "match": [{"not": [{"remote_ip": {"ranges": ["192.0.2.10/32"]}}]}],
+                    "handle": [{
+                        "handler": "subroute",
+                        "routes": [{"handle": [{"handler": "abort"}]}],
+                    }],
+                },
+                {
+                    "handle": [{
+                        "handler": "subroute",
+                        "routes": [{"handle": [{"handler": "static_response"}]}],
+                    }],
+                },
+            ]
+
+        document = {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "srv0": {
+                            "routes": [
+                                {"handle": [{"handler": "subroute", "routes": site_routes()}]},
+                                {"handle": [{"handler": "subroute", "routes": site_routes()}]},
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="server-state-caddy-adapted-") as directory:
+            path = Path(directory) / "adapted.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            validate.validate_adapted_caddy(path)
+
+            reordered = json.loads(path.read_text(encoding="utf-8"))
+            routes = reordered["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["routes"]
+            routes.reverse()
+            path.write_text(json.dumps(reordered), encoding="utf-8")
+            with self.assertRaises(AssertionError):
+                validate.validate_adapted_caddy(path)
+
 
 class GitTransportTests(unittest.TestCase):
     def test_transport_retains_the_runner_system_ca_store(self) -> None:

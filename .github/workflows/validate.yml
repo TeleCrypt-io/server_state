@@ -482,6 +482,23 @@ jobs:
             "$caddy_image" caddy validate --config /etc/caddy/Caddyfile >/dev/null
           test "$(wc -c <"$caddy_output")" -le 65536
           cat -- "$caddy_output"
+          caddy_adapted="$RUNNER_TEMP/caddy-adapted.json"
+          container_bounded --sensitive 1048576 "$caddy_adapted" 120 docker run --rm \
+            --user 65532:65532 \
+            --read-only \
+            --security-opt no-new-privileges:true \
+            --cap-drop ALL \
+            --cap-add NET_BIND_SERVICE \
+            --network none \
+            --tmpfs /config/caddy:uid=65532,gid=65532,mode=0700 \
+            --tmpfs /data/caddy:uid=65532,gid=65532,mode=0700 \
+            --env TRUSTED_PROXY=192.0.2.10/32 \
+            --env SERVER_NAME=example.invalid \
+            --volume "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            "$caddy_image" caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile --pretty
+          rm -f -- "$caddy_adapted.stderr"
+          test "$(wc -c <"$caddy_adapted")" -le 1048576
+          python3 .github/scripts/validate.py adapted-caddy "$caddy_adapted"
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/server-state-')

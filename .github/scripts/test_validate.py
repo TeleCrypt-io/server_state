@@ -78,6 +78,20 @@ class ManifestTests(unittest.TestCase):
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertNotIn("synapse/media_store", workflow)
 
+    def test_security_options_use_equals_separator_in_all_active_compose_and_ci_paths(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        compose = (root / "compose.yml").read_text(encoding="utf-8")
+        secret_proof = (root / ".github" / "secret-proof.compose.yml").read_text(encoding="utf-8")
+        workflow = (root / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8")
+        legacy_separator = "no-new-privileges" + ":"
+        self.assertNotIn(legacy_separator, compose + secret_proof + workflow)
+        self.assertEqual(compose.count('security_opt: ["no-new-privileges=true"]'), len(validate.SERVICES))
+        self.assertEqual(secret_proof.count('security_opt: ["no-new-privileges=true"]'), 3)
+        self.assertEqual(workflow.count("--security-opt no-new-privileges=true"), 2)
+        services = yaml.safe_load(compose)["services"]
+        for service in validate.SERVICES:
+            self.assertEqual(services[service]["security_opt"], ["no-new-privileges=true"])
+
     def test_validation_workflow_runs_only_on_trusted_pushes(self) -> None:
         workflow = (Path(__file__).resolve().parents[1] / "workflows" / "validate.yml").read_text(encoding="utf-8")
         self.assertIn(
@@ -517,6 +531,14 @@ class CaddyRouteTests(unittest.TestCase):
             gate_start = site.index("\timport ingress_peer_gate\n")
             fallback_start = site.index("\thandle {\n")
             self.assertLess(gate_start, fallback_start)
+
+    def test_cleartext_caddy_listener_allows_only_http11(self) -> None:
+        self.assertEqual(
+            re.findall(r"(?m)^[ \t]*protocols[ \t]+([^\s#]+(?:[ \t]+[^\s#]+)*)[ \t]*$", self.caddy),
+            ["h1"],
+        )
+        self.assertRegex(self.caddy, r"(?ms)^\tservers :8080 \{\n\t\tprotocols h1\n\t\}")
+        self.assertNotRegex(self.caddy, r"(?m)^[ \t]*protocols[ \t]+(?:[^\n]*[ \t])?(?:h2|h2c|h3)(?:[ \t]|$)")
 
     def test_adapted_ingress_peer_gate_rejects_untrusted_before_terminal_fallback(self) -> None:
         def site_routes() -> list[dict]:

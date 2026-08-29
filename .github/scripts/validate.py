@@ -466,6 +466,7 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
         "media deletion route order",
     )
     check("http://{$SERVER_NAME}:8080" in caddy and "http://backend.{$SERVER_NAME}:8080" in caddy, "host identities")
+    check(re.search(r"(?ms)^\tservers :8080 \{\n\t\tprotocols h1\n\t\}", caddy) is not None, "cleartext HTTP/1.1 listener")
     sites = re.findall(r"(?ms)^http://[^\n]+ \{.*?^\}", caddy)
     check(len(sites) == 2 and all("import ingress_peer_gate" in site and "import access_log" in site for site in sites), "ingress peer gate/logs")
     check(caddy.count("not remote_ip {$TRUSTED_PROXY}") == 1, "immediate ingress peer matcher")
@@ -691,7 +692,7 @@ def validate_source(values: dict[str, str]) -> None:
         "derived hosts",
     )
     check(not any(f"{name}=" in env_text for name in SECRET_ENV.values()), "secret variable in operator environment")
-    for text in ('user: "65532:65532"', "read_only: true", 'security_opt: ["no-new-privileges:true"]', 'cap_drop: ["ALL"]'):
+    for text in ('user: "65532:65532"', "read_only: true", 'security_opt: ["no-new-privileges=true"]', 'cap_drop: ["ALL"]'):
         check(text in caddy_body, ("Caddy", text))
     synapse = (ROOT / "synapse.yaml").read_text(encoding="utf-8")
     mas = (ROOT / "mas.yaml").read_text(encoding="utf-8")
@@ -821,7 +822,7 @@ def validate_rendered(path: Path) -> None:
         check("container_name" not in settings, (service, "global container name"))
         check("build" not in settings and settings.get("read_only") is True, (service, "immutable runtime"))
         validate_service_capabilities(service, settings)
-        check(settings.get("security_opt") == ["no-new-privileges:true"], (service, "privilege boundary"))
+        check(settings.get("security_opt") == ["no-new-privileges=true"], (service, "privilege boundary"))
         check(settings.get("user") == ("65532:65532" if service == "caddy" else "991:991"), (service, "uid"))
         check(not set(settings) & FORBIDDEN_SERVICE_KEYS, (service, "forbidden runtime"))
         check(set(settings.get("networks") or {}) == SERVICE_NETWORKS[service], (service, "networks"))

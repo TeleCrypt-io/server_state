@@ -27,6 +27,10 @@
 		trusted_proxies static {$TRUSTED_PROXY}
 		trusted_proxies_strict
 	}
+
+	servers :8080 {
+		protocols h1
+	}
 }
 
 # Safe response defaults. MAS embeds the Plan page from the same backend origin; Plan's own

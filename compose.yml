@@ -287,6 +287,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    # Cashier performs a read-only Synapse admin preflight before opening its listener.
+    # Wait for Synapse's actual health gate; MAS remains an indirect dependency through Synapse.
+    depends_on:
+      synapse:
+        condition: service_healthy
 # Compose file-backed secrets below are populated only by the guarded deployer from the private
 # `${TELECRYPT_DATA_DIR}/secrets` contract. They are intentionally outside the operator `.env`.
 secrets:

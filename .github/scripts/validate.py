@@ -117,7 +117,7 @@ EXPECTED_DEPENDS_ON = {
     "caddy": {"synapse": "service_started", "mas": "service_started"},
     "synapse": {"mas": "service_started"}, "registration": {"mas": "service_started"},
     "janitor": {"mas": "service_healthy", "cashier": "service_healthy"},
-    "plan": {"mas": "service_started"}, "mas": {}, "cashier": {},
+    "plan": {"mas": "service_started"}, "mas": {}, "cashier": {"synapse": "service_healthy"},
 }
 FORBIDDEN_SERVICE_KEYS = {"privileged", "network_mode", "pid", "ipc", "devices", "runtime", "device_cgroup_rules", "userns_mode", "uts", "cgroup", "cgroup_parent", "sysctls", "extra_hosts"}
 MIN_DOCKER_ENGINE = (28, 0, 0)

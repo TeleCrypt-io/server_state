@@ -109,6 +109,19 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("mas-admin", compose)
         self.assertNotRegex(compose, r"(?s)synapse_mas_net:\s*\n\s*gw_priority:\s*1")
 
+    def test_cashier_waits_for_synapse_readiness_before_startup(self) -> None:
+        compose = yaml.safe_load((Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8"))
+        services = compose["services"]
+        self.assertEqual(
+            services["cashier"]["depends_on"],
+            {"synapse": {"condition": "service_healthy"}},
+        )
+        self.assertEqual(
+            services["synapse"]["depends_on"],
+            {"mas": {"condition": "service_started"}},
+        )
+        self.assertNotIn("mas", services["cashier"]["depends_on"])
+
     def test_mas_uses_supported_ipv4_address_binds_and_keeps_admin_auth_boundary(self) -> None:
         root = Path(__file__).resolve().parents[2]
         mas = (root / "mas.yaml").read_text(encoding="utf-8")

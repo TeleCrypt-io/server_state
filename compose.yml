@@ -31,7 +31,7 @@ services:
       edge_registration_net:
       edge_plan_net:
       edge_cashier_net:
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     # The official image's Caddy executable carries NET_BIND_SERVICE as a file capability.
     # Retain only that exact in-container capability so it can execute under cap_drop ALL;
@@ -76,7 +76,7 @@ services:
       synapse_egress_net:
         gw_priority: 1
       cashier_synapse_net:
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     read_only: true
     logging:
@@ -115,7 +115,7 @@ services:
   mas:
     image: ${MAS_IMAGE:?set MAS_IMAGE}
     restart: unless-stopped
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     # MAS stores application state in external PostgreSQL; the official image has no writable
     # data volume or filesystem contract, so deny root-filesystem writes at runtime.
@@ -166,7 +166,7 @@ services:
       edge_registration_net:
       registration_egress_net:
         gw_priority: 1
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     read_only: true
     user: "991:991"
@@ -196,7 +196,7 @@ services:
       mas_admin_net:
       janitor_egress_net:
         gw_priority: 1
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     read_only: true
     user: "991:991"
@@ -233,7 +233,7 @@ services:
       edge_plan_net:
       plan_mas_net:
       plan_cashier_net:
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     read_only: true
     user: "991:991"
@@ -264,7 +264,7 @@ services:
       cashier_synapse_net:
       cashier_egress_net:
         gw_priority: 1
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ["no-new-privileges=true"]
     cap_drop: ["ALL"]
     read_only: true
     user: "991:991"

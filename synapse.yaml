@@ -24,7 +24,8 @@ listeners:
 # keeping partial maps here would silently discard required fields from the private map.
 
 # media_storage_providers -> synapse.secrets.json. The S3-compatible endpoint is
-# sss.telecrypt.io and is reachable only from the production VM. Local uploads are stored
+# sss.telecrypt.io and is reachable only from authorized production and stage Linux VMs. Local
+# uploads are stored
 # synchronously with private bucket credentials; remote media is disabled.
 # macaroon_secret_key and form_secret -> synapse.secrets.json
 

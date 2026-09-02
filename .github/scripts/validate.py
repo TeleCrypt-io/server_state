@@ -326,6 +326,34 @@ def validate_mas_listeners(mas: str) -> None:
         check(not re.search(r"mas-(?:edge|synapse|plan|admin)", body), (name, "hostname alias bind"))
 
 
+def validate_synapse_prejoin_state(synapse: str) -> None:
+    """Require the smallest stripped invite-state contract for storage rooms.
+
+    Synapse's default pre-join state contains the room create event but not custom state. The
+    SDK therefore needs the fixed MSC3089 purpose event to identify a storage tree before join;
+    all parent relations are needed to suppress nested-folder invitations.
+    """
+    lines = synapse.splitlines()
+    marker = "room_prejoin_state:"
+    check(lines.count(marker) == 1, "Synapse pre-join state section")
+    start = lines.index(marker)
+    body: list[str] = []
+    for line in lines[start + 1 :]:
+        if line and not line[0].isspace() and not line.lstrip().startswith("#"):
+            break
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            body.append(stripped)
+    check(
+        body == [
+            "additional_event_types:",
+            "- [org.matrix.msc3088.purpose, org.matrix.msc3089.data_tree]",
+            "- m.space.parent",
+        ],
+        ("Synapse pre-join state", body),
+    )
+
+
 def validate_mas_admin_network(compose: str, sections: dict[str, str]) -> None:
     """Require one deterministic private MAS admin interface and no alias-based bind path."""
     check(
@@ -705,6 +733,7 @@ def validate_source(values: dict[str, str]) -> None:
         "Synapse listeners/upload/staging",
     )
     check("url_preview_enabled: false" in synapse, "Synapse URL previews disabled")
+    validate_synapse_prejoin_state(synapse)
     synapse_fixture = json.loads(
         (ROOT / ".github" / "fixtures" / "synapse.secrets.json").read_text(encoding="utf-8")
     )

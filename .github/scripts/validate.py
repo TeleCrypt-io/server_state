@@ -781,7 +781,7 @@ def validate_source(values: dict[str, str]) -> None:
     check("extra_hosts:" not in compose and "response>headers>Set-Cookie" not in caddy, "static/header boundary")
     check(
         "RootlessKit >= 3.0" in caddy
-        and "built-in TCP source-address propagation" in caddy
+        and "`slirp4netns` port driver" in caddy
         and "userland-proxy disabled" in caddy
         and "prove the observed peer/X-Forwarded behavior live" in caddy,
         "rootless source-peer activation prerequisite",

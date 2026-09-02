@@ -13,7 +13,7 @@
 #     to trust only that proxy's forwarded protocol and client context; application identity and
 #     rate limiting do not depend on a forwarded client-IP header.
 #   - For rootless Docker, this peer gate is activation-valid only with RootlessKit >= 3.0's
-#     built-in TCP source-address propagation and userland-proxy disabled. Harness must verify those
+#     `slirp4netns` port driver and userland-proxy disabled. Harness must verify those
 #     exact host conditions and prove the observed peer/X-Forwarded behavior live; other publish paths
 #     do not satisfy this boundary.
 

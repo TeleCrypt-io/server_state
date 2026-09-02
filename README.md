@@ -109,8 +109,8 @@ for peers on attached Docker networks. The external TLS terminator must discard 
 client-supplied forwarding headers, then append the observed client address and
 `X-Forwarded-Proto: https` before forwarding to Caddy. Caddy strictly trusts only the exact
 configured proxy host address for forwarded protocol and client context; Registration receives no
-derived client-IP identity header. The guarded activation must verify RootlessKit 3.0 or newer with
-built-in TCP source-address propagation and rootless Docker's userland-proxy disabled, then prove the
+derived client-IP identity header. The guarded activation must verify RootlessKit 3.0 or newer with the
+`slirp4netns` port driver and rootless Docker's userland-proxy disabled, then prove the
 actual transport peer and forwarded-protocol behavior live; other rootless publish paths do not satisfy
 the Caddy `remote_ip` boundary.
 MAS's web listener uses the supported IPv4-only `0.0.0.0:8080` socket address, so it does not require

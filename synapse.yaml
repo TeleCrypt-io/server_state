@@ -7,6 +7,15 @@ signing_key_path: "/signing.key"          # provided from TELECRYPT_DATA_DIR/sec
 pid_file: /tmp/homeserver.pid
 log_config: "/log.config"
 
+# Keep Synapse's standard invite state and add only the state needed to classify storage
+# invitations before joining. The fixed MSC3089 purpose key identifies a data-tree space;
+# m.space.parent is needed to hide invitations for nested folders. The parent state key is the
+# parent room ID, so it cannot be narrowed to one fixed key.
+room_prejoin_state:
+  additional_event_types:
+    - [org.matrix.msc3088.purpose, org.matrix.msc3089.data_tree]
+    - m.space.parent
+
 # Plain HTTP; TLS terminated upstream → Caddy → here. x_forwarded trusts X-Forwarded-* headers.
 listeners:
   - port: 8008

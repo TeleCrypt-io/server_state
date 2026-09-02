@@ -100,6 +100,32 @@ class ManifestTests(unittest.TestCase):
         )
         self.assertNotIn("pull_request:", workflow)
 
+    def test_synapse_prejoin_state_is_narrow_and_covers_nested_folders(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        synapse = (root / "synapse.yaml").read_text(encoding="utf-8")
+        validate.validate_synapse_prejoin_state(synapse)
+        mutations = (
+            synapse.replace("room_prejoin_state:\n", "", 1),
+            synapse.replace(
+                "- [org.matrix.msc3088.purpose, org.matrix.msc3089.data_tree]",
+                "- [org.matrix.msc3088.purpose, org.example.other]",
+                1,
+            ),
+            synapse.replace(
+                "- m.space.parent",
+                "- [m.space.parent, !fixed:example.test]",
+                1,
+            ),
+            synapse.replace(
+                "  additional_event_types:\n",
+                "  disable_default_event_types: true\n  additional_event_types:\n",
+                1,
+            ),
+        )
+        for candidate in mutations:
+            with self.assertRaises(AssertionError):
+                validate.validate_synapse_prejoin_state(candidate)
+
     def test_synapse_mas_peer_is_internal_and_egress_isolated(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         self.assertEqual(validate.EGRESS_NETWORKS["synapse"], "synapse_egress_net")
@@ -306,8 +332,8 @@ class ManifestTests(unittest.TestCase):
             synapse_fixture["media_storage_providers"][0]["config"]["endpoint_url"],
             "https://sss.telecrypt.io",
         )
-        self.assertIn("reachable only from the production VM", synapse)
-        self.assertIn("reachable only from the production VM", readme)
+        self.assertIn("reachable only from authorized production and stage Linux VMs", synapse)
+        self.assertIn("reachable only from authorized production and stage Linux VMs", readme)
         self.assertNotIn("s3.telecrypt.io", synapse + workflow + readme)
         self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)

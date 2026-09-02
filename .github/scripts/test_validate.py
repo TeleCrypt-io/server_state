@@ -332,8 +332,8 @@ class ManifestTests(unittest.TestCase):
             synapse_fixture["media_storage_providers"][0]["config"]["endpoint_url"],
             "https://sss.telecrypt.io",
         )
-        self.assertIn("reachable only from the production VM", synapse)
-        self.assertIn("reachable only from the production VM", readme)
+        self.assertIn("reachable only from authorized production and stage Linux VMs", synapse)
+        self.assertIn("reachable only from authorized production and stage Linux VMs", readme)
         self.assertNotIn("s3.telecrypt.io", synapse + workflow + readme)
         self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)

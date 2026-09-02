@@ -751,7 +751,7 @@ def validate_source(values: dict[str, str]) -> None:
         and len(synapse_media_providers) == 1
         and synapse_media_providers[0].get("config", {}).get("endpoint_url")
         == "https://sss.telecrypt.io"
-        and "reachable only from the production VM" in synapse
+        and "reachable only from authorized production and stage Linux VMs" in synapse
         and "media_store_path: /staging/media" in synapse,
         "Synapse complete private loader maps",
     )

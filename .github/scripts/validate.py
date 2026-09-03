@@ -233,15 +233,21 @@ VALID_PROFILES = {
 
 # Synapse's environment-specific nonsecret settings are selected from this closed map. Keep the
 # filename tied to the already-validated SERVER_NAME so Compose cannot select an arbitrary file or
-# silently fall back to one profile. Each file is intentionally rc_message-only: all secrets,
-# database/provider maps, and public identity remain in their separate config layers.
+# silently fall back to one profile. Each file contains only the explicit request-mutation limits;
+# all secrets, database/provider maps, and public identity remain in their separate config layers.
 SYNAPSE_ENVIRONMENT_FILES = {
     "telecrypt.io": "synapse.telecrypt.io.yaml",
     "stage.telecrypt.io": "synapse.stage.telecrypt.io.yaml",
 }
 SYNAPSE_ENVIRONMENT_VALUES = {
-    "telecrypt.io": {"per_second": 0.2, "burst_count": 10},
-    "stage.telecrypt.io": {"per_second": 1000, "burst_count": 1000},
+    "telecrypt.io": {
+        "rc_message": {"per_second": 0.2, "burst_count": 10},
+        "rc_room_creation": {"per_second": 0.016, "burst_count": 10},
+    },
+    "stage.telecrypt.io": {
+        "rc_message": {"per_second": 1000, "burst_count": 1000},
+        "rc_room_creation": {"per_second": 1000, "burst_count": 1000},
+    },
 }
 
 
@@ -254,8 +260,8 @@ def validate_synapse_environment_profiles() -> None:
     """Validate the closed, canonical, nonsecret Synapse profile overlays.
 
     This validator intentionally does not import PyYAML: source validation runs before any
-    dependencies are installed. The accepted canonical form is three YAML data lines (comments
-    are permitted) containing exactly rc_message and its two scalar limits.
+    dependencies are installed. The accepted canonical form is six YAML data lines (comments are
+    permitted) containing exactly rc_message and rc_room_creation, each with two scalar limits.
     """
     check(set(SYNAPSE_ENVIRONMENT_FILES) == {"telecrypt.io", "stage.telecrypt.io"}, "Synapse profile names")
     check(set(SYNAPSE_ENVIRONMENT_FILES.values()) == {
@@ -267,11 +273,13 @@ def validate_synapse_environment_profiles() -> None:
         text = path.read_text(encoding="utf-8")
         check(text.endswith("\n") and not text.endswith("\n\n"), (server_name, "profile newline"))
         data_lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-        expected = [
-            "rc_message:",
-            f"  per_second: {SYNAPSE_ENVIRONMENT_VALUES[server_name]['per_second']}",
-            f"  burst_count: {SYNAPSE_ENVIRONMENT_VALUES[server_name]['burst_count']}",
-        ]
+        expected = []
+        for setting, values in SYNAPSE_ENVIRONMENT_VALUES[server_name].items():
+            expected.extend([
+                f"{setting}:",
+                f"  per_second: {values['per_second']}",
+                f"  burst_count: {values['burst_count']}",
+            ])
         check(data_lines == expected, (server_name, "profile canonical shape", data_lines))
 
 

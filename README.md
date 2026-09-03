@@ -42,11 +42,13 @@ signing key is mounted as `/signing.key`. The MAS overlay contains its encryptio
 database URI, Matrix shared secret, and two exact environment-bound clients. Synapse loads the
 committed base, then the exact tracked nonsecret profile selected by `SERVER_NAME`, then its private
 JSON overlay, and finally the runtime identity layer. The two profile files contain only the explicit
-`rc_message` limiter: production keeps Synapse's standard `per_second: 0.2` and `burst_count: 10`,
-while stage uses finite `per_second: 1000` and `burst_count: 1000` values for parallel acceptance
-tests. Synapse's config files are shallow-merged by top-level key, so its private overlay owns each
-complete `database` and `matrix_authentication_service` map; the committed base and profile contain
-no partial map that could overwrite it.
+request-mutation limiters: production keeps Synapse's standard `rc_message` (`per_second: 0.2`,
+`burst_count: 10`) and `rc_room_creation` (`per_second: 0.016`, `burst_count: 10`), while stage uses
+finite `per_second: 1000` and `burst_count: 1000` values for both settings so parallel acceptance
+tests do not spend their time in Synapse's production throttles. Synapse's config files are
+shallow-merged by top-level key, so its private overlay owns each complete `database` and
+`matrix_authentication_service` map; the committed base and profile contain no partial map that
+could overwrite it.
 Email and policy defaults remain in `mas.yaml`; the final runtime identity layer supplies the Janitor
 admin-client ID. The committed base configs retain reviewed nonsecret loader options, while
 credentials, database URIs, OAuth client secrets, and provider values remain outside this repository.

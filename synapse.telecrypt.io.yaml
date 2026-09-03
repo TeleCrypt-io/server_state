@@ -3,3 +3,6 @@
 rc_message:
   per_second: 0.2
   burst_count: 10
+rc_room_creation:
+  per_second: 0.016
+  burst_count: 10

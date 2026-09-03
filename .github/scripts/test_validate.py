@@ -126,7 +126,7 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate.validate_synapse_prejoin_state(candidate)
 
-    def test_synapse_environment_profiles_are_closed_rc_message_only_and_exact(self) -> None:
+    def test_synapse_environment_profiles_are_closed_request_limiters_only_and_exact(self) -> None:
         root = Path(__file__).resolve().parents[2]
         validate.validate_synapse_environment_profiles()
         self.assertEqual(
@@ -142,12 +142,18 @@ class ManifestTests(unittest.TestCase):
             with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
                 validate.synapse_environment_path(invalid)
         expected = {
-            "telecrypt.io": {"per_second": 0.2, "burst_count": 10},
-            "stage.telecrypt.io": {"per_second": 1000, "burst_count": 1000},
+            "telecrypt.io": {
+                "rc_message": {"per_second": 0.2, "burst_count": 10},
+                "rc_room_creation": {"per_second": 0.016, "burst_count": 10},
+            },
+            "stage.telecrypt.io": {
+                "rc_message": {"per_second": 1000, "burst_count": 1000},
+                "rc_room_creation": {"per_second": 1000, "burst_count": 1000},
+            },
         }
         for server_name, filename in validate.SYNAPSE_ENVIRONMENT_FILES.items():
             document = yaml.safe_load((root / filename).read_text(encoding="utf-8"))
-            self.assertEqual(document, {"rc_message": expected[server_name]})
+            self.assertEqual(document, expected[server_name])
 
         compose = (root / "compose.yml").read_text(encoding="utf-8")
         synapse = validate.service_section(compose, "synapse")
@@ -158,7 +164,10 @@ class ManifestTests(unittest.TestCase):
         )
 
         invalid_values = dict(validate.SYNAPSE_ENVIRONMENT_VALUES)
-        invalid_values["stage.telecrypt.io"] = {"per_second": 1, "burst_count": 1}
+        invalid_values["stage.telecrypt.io"] = {
+            "rc_message": {"per_second": 1, "burst_count": 1},
+            "rc_room_creation": {"per_second": 1, "burst_count": 1},
+        }
         with mock.patch.object(validate, "SYNAPSE_ENVIRONMENT_VALUES", invalid_values):
             with self.assertRaises(AssertionError):
                 validate.validate_synapse_environment_profiles()
@@ -378,9 +387,9 @@ class ManifestTests(unittest.TestCase):
             '["-c", "/homeserver.yaml", "-c", profile_path, "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]',
             workflow,
         )
-        self.assertIn("rc_message.per_second, rc_message.burst_count", workflow)
-        self.assertIn('("/synapse-environment.yaml", (1000, 1000))', workflow)
-        self.assertIn('("/synapse-production-environment.yaml", (0.2, 10))', workflow)
+        self.assertIn("setting.per_second, setting.burst_count", workflow)
+        self.assertIn('"rc_room_creation": (1000, 1000)', workflow)
+        self.assertIn('"rc_room_creation": (0.016, 10)', workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
         self.assertNotIn('"transport":"disabled"', workflow)
         self.assertNotIn("SYNAPSE_SECRETS_YAML", workflow)

@@ -376,18 +376,26 @@ jobs:
                   from synapse.config.homeserver import HomeServerConfig
                   try:
                       for profile_path, expected_limits in (
-                          ("/synapse-environment.yaml", (1000, 1000)),
-                          ("/synapse-production-environment.yaml", (0.2, 10)),
+                          ("/synapse-environment.yaml", {
+                              "rc_message": (1000, 1000),
+                              "rc_room_creation": (1000, 1000),
+                          }),
+                          ("/synapse-production-environment.yaml", {
+                              "rc_message": (0.2, 10),
+                              "rc_room_creation": (0.016, 10),
+                          }),
                       ):
                           config = HomeServerConfig.load_config(
                               "Synapse JSON loader proof",
                               ["-c", "/homeserver.yaml", "-c", profile_path, "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
                           )
                           server_name = getattr(getattr(config, "server", None), "server_name", None)
-                          rc_message = getattr(getattr(config, "ratelimiting", None), "rc_message", None)
-                          if config is None or server_name != "stage.telecrypt.io" or rc_message is None or (
-                              rc_message.per_second, rc_message.burst_count
-                          ) != expected_limits:
+                          ratelimiting = getattr(config, "ratelimiting", None)
+                          if config is None or server_name != "stage.telecrypt.io" or ratelimiting is None or any(
+                              (setting := getattr(ratelimiting, name, None)) is None or
+                              (setting.per_second, setting.burst_count) != limits
+                              for name, limits in expected_limits.items()
+                          ):
                               marker = "profile-values"
                               break
                       else:

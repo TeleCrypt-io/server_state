@@ -435,9 +435,9 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
         check(found, f"missing {name} matcher")
         return found.group(0)
 
-    def rejects_methods(name: str) -> None:
+    def rejects_methods(name: str, allow_methods: str = "POST") -> None:
         found = re.search(rf"(?ms)^\thandle @{name} \{{.*?^\t\}}", caddy)
-        check(found and 'header Allow "POST"' in found.group(0) and 'respond "Method Not Allowed" 405' in found.group(0), name)
+        check(found and f'header Allow "{allow_methods}"' in found.group(0) and 'respond "Method Not Allowed" 405' in found.group(0), name)
         check("reverse_proxy" not in found.group(0), name)
 
     login = "@matrix_compat_login path_regexp ^/_matrix/client/[^/]+/login/?$"
@@ -469,8 +469,33 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
     rejects_methods("mas_compat_other_method")
     rejects_methods("agents_other_method")
     delete_path = "/_matrix/client/unstable/io.telecrypt.storage/delete_media"
+    delete_options = matcher("telecrypt_delete_media_options")
     delete_other = matcher("telecrypt_delete_media_other_method")
     delete_post = matcher("telecrypt_delete_media")
+    options_handle = re.search(r"(?ms)^\thandle @telecrypt_delete_media_options \{.*?^\t\}", caddy)
+    check(
+        "method OPTIONS" in delete_options
+        and f"path {delete_path}" in delete_options
+        and 'header Origin https://storage.{$SERVER_NAME}' in delete_options
+        and 'header Access-Control-Request-Method POST' in delete_options,
+        "media deletion preflight matcher",
+    )
+    check("Access-Control-Request-Headers" not in delete_options, "media deletion preflight request-header matching")
+    check(
+        options_handle
+        and 'Access-Control-Allow-Origin "https://storage.{$SERVER_NAME}"' in options_handle.group(0)
+        and 'Access-Control-Allow-Methods "POST"' in options_handle.group(0)
+        and 'Access-Control-Allow-Headers "Authorization, Content-Type"' in options_handle.group(0)
+        and 'respond "" 204' in options_handle.group(0)
+        and not re.search(r"Access-Control-Allow-(?:Credentials|Private-Network)", options_handle.group(0))
+        and not re.search(r'Access-Control-Allow-Origin "(?:\*|\{http\.request\.header\.Origin\})"', options_handle.group(0)),
+        "media deletion preflight response",
+    )
+    check(
+        options_handle
+        and len(re.findall(r"(?m)^\s*Access-Control-[A-Za-z-]+ ", options_handle.group(0))) == 3,
+        "media deletion preflight header narrowness",
+    )
     check(
         f"path {delete_path}" in delete_other and "not method POST" in delete_other,
         "media deletion rejection matcher",
@@ -479,7 +504,7 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
         f"method POST" in delete_post and f"path {delete_path}" in delete_post,
         "media deletion POST matcher",
     )
-    rejects_methods("telecrypt_delete_media_other_method")
+    rejects_methods("telecrypt_delete_media_other_method", "POST, OPTIONS")
     delete_handle = re.search(r"(?ms)^\thandle @telecrypt_delete_media \{.*?^\t\}", caddy)
     check(
         delete_handle
@@ -489,7 +514,8 @@ def validate_caddy(caddy: str, caddy_body: str) -> None:
         "media deletion body limit/proxy",
     )
     check(
-        caddy.index("@telecrypt_delete_media_other_method") < caddy.index("\t@synapse path_regexp")
+        caddy.index("@telecrypt_delete_media_options") < caddy.index("@telecrypt_delete_media_other_method")
+        and caddy.index("@telecrypt_delete_media_other_method") < caddy.index("\t@synapse path_regexp")
         and caddy.index("@telecrypt_delete_media {") < caddy.index("\t@synapse path_regexp"),
         "media deletion route order",
     )

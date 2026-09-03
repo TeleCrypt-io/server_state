@@ -200,13 +200,31 @@ http://backend.{$SERVER_NAME}:8080 {
 	}
 
 	# Media deletion is an authenticated Synapse operation, but only POST is part of its contract.
+	# Answer the browser preflight at the edge with only the headers required by the Storage Web
+	# POST. The origin is the exact current environment's Storage host; no arbitrary-origin
+	# reflection or wildcard CORS is allowed.
+	@telecrypt_delete_media_options {
+		method OPTIONS
+		path /_matrix/client/unstable/io.telecrypt.storage/delete_media
+		header Origin https://storage.{$SERVER_NAME}
+		header Access-Control-Request-Method POST
+	}
+	handle @telecrypt_delete_media_options {
+		header {
+			Access-Control-Allow-Origin "https://storage.{$SERVER_NAME}"
+			Access-Control-Allow-Methods "POST"
+			Access-Control-Allow-Headers "Authorization, Content-Type"
+		}
+		respond "" 204
+	}
+
 	# Reject other methods at the edge and cap accepted deletion batches before proxying them.
 	@telecrypt_delete_media_other_method {
 		path /_matrix/client/unstable/io.telecrypt.storage/delete_media
 		not method POST
 	}
 	handle @telecrypt_delete_media_other_method {
-		header Allow "POST"
+		header Allow "POST, OPTIONS"
 		respond "Method Not Allowed" 405
 	}
 	@telecrypt_delete_media {

@@ -127,6 +127,10 @@ one canonical IPv4 address with `/32` or IPv6 address with `/128` is accepted.
 MAS's hosted `/auth/login` remains available for OAuth browser and device authorization. Caddy
 returns `404` for public `/_matrix/client/*/login`, so Matrix password authentication is
 unavailable. Only logout and refresh routes remain routed to MAS where Matrix clients require them.
+The exact Storage media-deletion endpoint accepts browser `OPTIONS` preflight only for its `POST`
+contract and the `Authorization` and `Content-Type` request headers. Caddy returns the fixed current
+environment Storage origin in `Access-Control-Allow-Origin`; it does not reflect arbitrary origins
+or widen the route's allowed methods. POST bodies remain capped at 32 KiB before Synapse.
 
 ## Billing identity
 

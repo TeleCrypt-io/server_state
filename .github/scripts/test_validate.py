@@ -517,12 +517,38 @@ class CaddyRouteTests(unittest.TestCase):
 
     def test_media_deletion_route_is_exact_bounded_and_before_generic_matrix_proxy(self) -> None:
         path = "/_matrix/client/unstable/io.telecrypt.storage/delete_media"
+        options = self.caddy.index("@telecrypt_delete_media_options {")
         post = self.caddy.index("@telecrypt_delete_media {")
         generic = self.caddy.index("\t@synapse path_regexp")
+        self.assertLess(options, generic)
         self.assertLess(post, generic)
         self.assertIn("method POST", self.caddy[post:self.caddy.index("\n\t}", post)])
         self.assertIn(f"path {path}", self.caddy[post:self.caddy.index("\n\t}", post)])
         self.assertIn("max_size 32KiB", self.caddy[post:generic])
+
+    def test_media_deletion_preflight_is_exact_origin_post_only_and_narrow(self) -> None:
+        path = "/_matrix/client/unstable/io.telecrypt.storage/delete_media"
+        matcher_start = self.caddy.index("@telecrypt_delete_media_options {")
+        matcher_end = self.caddy.index("\n\t}", matcher_start)
+        matcher = self.caddy[matcher_start:matcher_end]
+        handle_start = self.caddy.index("handle @telecrypt_delete_media_options {")
+        handle_end = self.caddy.index("\n\t}", handle_start)
+        handle = self.caddy[handle_start:handle_end]
+        self.assertIn("method OPTIONS", matcher)
+        self.assertIn(f"path {path}", matcher)
+        self.assertIn("header Origin https://storage.{$SERVER_NAME}", matcher)
+        self.assertIn("header Access-Control-Request-Method POST", matcher)
+        self.assertNotIn("Access-Control-Request-Headers", matcher)
+        self.assertIn('Access-Control-Allow-Origin "https://storage.{$SERVER_NAME}"', handle)
+        self.assertIn('Access-Control-Allow-Methods "POST"', handle)
+        self.assertIn('Access-Control-Allow-Headers "Authorization, Content-Type"', handle)
+        self.assertIn('respond "" 204', handle)
+        self.assertEqual(len(re.findall(r"(?m)^\s*Access-Control-[A-Za-z-]+ ", handle)), 3)
+        self.assertNotIn("Access-Control-Allow-Credentials", handle)
+        self.assertNotIn("Access-Control-Allow-Private-Network", handle)
+        self.assertNotIn('Access-Control-Allow-Origin "*"', handle)
+        self.assertNotIn("{http.request.header.Origin}", handle)
+        self.assertLess(matcher_start, self.caddy.index("@telecrypt_delete_media_other_method"))
 
     def test_media_deletion_non_post_is_rejected_with_allow_header(self) -> None:
         start = self.caddy.index("@telecrypt_delete_media_other_method {")
@@ -533,7 +559,7 @@ class CaddyRouteTests(unittest.TestCase):
         handle = self.caddy[handle_start:handle_end]
         self.assertIn("path /_matrix/client/unstable/io.telecrypt.storage/delete_media", matcher)
         self.assertIn("not method POST", matcher)
-        self.assertIn('header Allow "POST"', handle)
+        self.assertIn('header Allow "POST, OPTIONS"', handle)
         self.assertIn('respond "Method Not Allowed" 405', handle)
         self.assertNotIn("reverse_proxy", handle)
 

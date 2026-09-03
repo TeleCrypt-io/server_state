@@ -1,7 +1,8 @@
 # Synapse — committed base config. Contains NO secrets.
-# The Harness writes public identity (server_name and public_baseurl) to a runtime layer after the
-# private JSON overlay and before Compose validation. Secret-bearing values remain private; reviewed
-# nonsecret loader options are committed here. The final identity layer owns public identity fields.
+# Compose loads this committed base first, then the exact SERVER_NAME-selected nonsecret profile,
+# the private JSON overlay, and finally the runtime identity layer. The Harness writes public
+# identity (server_name and public_baseurl) to that final runtime layer before Compose validation.
+# Secret-bearing values remain private; reviewed nonsecret loader options are committed here.
 
 signing_key_path: "/signing.key"          # provided from TELECRYPT_DATA_DIR/secrets (never committed)
 pid_file: /tmp/homeserver.pid
@@ -27,10 +28,11 @@ listeners:
       - names: [client]              # client resource includes client + media APIs; federation disabled
         compress: false
 
-# server_name and public_baseurl: -> in the runtime identity layer. The complete database map
-# (driver plus args) and complete matrix_authentication_service map (enabled, endpoint, and secret)
-# are supplied by synapse.secrets.json. Synapse's config files are shallow-merged by top-level key;
-# keeping partial maps here would silently discard required fields from the private map.
+# server_name and public_baseurl: -> in the runtime identity layer. The selected profile contains
+# only the environment's explicit rc_message limits. The complete database map (driver plus args)
+# and complete matrix_authentication_service map (enabled, endpoint, and secret) are supplied by
+# synapse.secrets.json. Synapse's config files are shallow-merged by top-level key; keeping partial
+# maps here would silently discard required fields from the private map.
 
 # media_storage_providers -> synapse.secrets.json. The S3-compatible endpoint is
 # sss.telecrypt.io and is reachable only from authorized production and stage Linux VMs. Local

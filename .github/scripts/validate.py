@@ -231,6 +231,49 @@ VALID_PROFILES = {
     ("telecrypt.io", "live"),
 }
 
+# Synapse's environment-specific nonsecret settings are selected from this closed map. Keep the
+# filename tied to the already-validated SERVER_NAME so Compose cannot select an arbitrary file or
+# silently fall back to one profile. Each file is intentionally rc_message-only: all secrets,
+# database/provider maps, and public identity remain in their separate config layers.
+SYNAPSE_ENVIRONMENT_FILES = {
+    "telecrypt.io": "synapse.telecrypt.io.yaml",
+    "stage.telecrypt.io": "synapse.stage.telecrypt.io.yaml",
+}
+SYNAPSE_ENVIRONMENT_VALUES = {
+    "telecrypt.io": {"per_second": 0.2, "burst_count": 10},
+    "stage.telecrypt.io": {"per_second": 1000, "burst_count": 1000},
+}
+
+
+def synapse_environment_path(server_name: str) -> Path:
+    check(server_name in SYNAPSE_ENVIRONMENT_FILES, ("SERVER_NAME", server_name))
+    return ROOT / SYNAPSE_ENVIRONMENT_FILES[server_name]
+
+
+def validate_synapse_environment_profiles() -> None:
+    """Validate the closed, canonical, nonsecret Synapse profile overlays.
+
+    This validator intentionally does not import PyYAML: source validation runs before any
+    dependencies are installed. The accepted canonical form is three YAML data lines (comments
+    are permitted) containing exactly rc_message and its two scalar limits.
+    """
+    check(set(SYNAPSE_ENVIRONMENT_FILES) == {"telecrypt.io", "stage.telecrypt.io"}, "Synapse profile names")
+    check(set(SYNAPSE_ENVIRONMENT_FILES.values()) == {
+        "synapse.telecrypt.io.yaml", "synapse.stage.telecrypt.io.yaml",
+    }, "Synapse profile files")
+    for server_name, filename in SYNAPSE_ENVIRONMENT_FILES.items():
+        path = synapse_environment_path(server_name)
+        check(path.name == filename and path.is_file() and not path.is_symlink(), (server_name, "profile file"))
+        text = path.read_text(encoding="utf-8")
+        check(text.endswith("\n") and not text.endswith("\n\n"), (server_name, "profile newline"))
+        data_lines = [line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        expected = [
+            "rc_message:",
+            f"  per_second: {SYNAPSE_ENVIRONMENT_VALUES[server_name]['per_second']}",
+            f"  burst_count: {SYNAPSE_ENVIRONMENT_VALUES[server_name]['burst_count']}",
+        ]
+        check(data_lines == expected, (server_name, "profile canonical shape", data_lines))
+
 
 def validate_profile(env: dict[str, str]) -> tuple[str, str]:
     profile = (env.get("SERVER_NAME", ""), env.get("BILLING_ENVIRONMENT", ""))
@@ -758,6 +801,15 @@ def validate_source(values: dict[str, str]) -> None:
         and "pid_file: /tmp/homeserver.pid" in synapse,
         "Synapse listeners/upload/staging",
     )
+    validate_synapse_environment_profiles()
+    check(
+        "./synapse.${SERVER_NAME:?set SERVER_NAME}.yaml:/synapse-environment.yaml:ro" in sections["synapse"],
+        "Synapse environment profile mount",
+    )
+    check(
+        'command: ["-c", "/homeserver.yaml", "-c", "/synapse-environment.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]' in sections["synapse"],
+        "Synapse config order",
+    )
     check("url_preview_enabled: false" in synapse, "Synapse URL previews disabled")
     validate_synapse_prejoin_state(synapse)
     synapse_fixture = json.loads(
@@ -859,6 +911,7 @@ def validate_rendered(path: Path) -> None:
 
     document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs)
     check(isinstance(document, dict) and set(document) == {"name", "services", "networks", "secrets"}, "Compose document shape")
+    validate_synapse_environment_profiles()
     validate_mas_listeners((ROOT / "mas.yaml").read_text(encoding="utf-8"))
     services, networks = document["services"], document["networks"]
     check(set(services) == set(SERVICES) and set(networks) == set({name for names in SERVICE_NETWORKS.values() for name in names}), "Compose topology")
@@ -976,7 +1029,13 @@ def validate_rendered(path: Path) -> None:
         check(not services[service].get("volumes"), (service, "volume isolation"))
     expected_mounts = {
         "caddy": {"/etc/caddy/Caddyfile": (str(ROOT / "Caddyfile"), True)},
-        "synapse": {"/homeserver.yaml": (str(ROOT / "synapse.yaml"), True), "/runtime-identity.yaml": (f"{data_dir}/runtime/synapse.identity.yaml", True), "/log.config": (str(ROOT / "synapse.log.config"), True), "/staging": (f"{data_dir}/runtime/synapse-staging", False)},
+        "synapse": {
+            "/homeserver.yaml": (str(ROOT / "synapse.yaml"), True),
+            "/synapse-environment.yaml": (str(synapse_environment_path(env["SERVER_NAME"])), True),
+            "/runtime-identity.yaml": (f"{data_dir}/runtime/synapse.identity.yaml", True),
+            "/log.config": (str(ROOT / "synapse.log.config"), True),
+            "/staging": (f"{data_dir}/runtime/synapse-staging", False),
+        },
         "mas": {"/config.yaml": (str(ROOT / "mas.yaml"), True), "/runtime-identity.yaml": (f"{data_dir}/runtime/mas.identity.yaml", True)},
     }
     for service, expected in expected_mounts.items():
@@ -985,7 +1044,12 @@ def validate_rendered(path: Path) -> None:
         for target, (source, read_only) in expected.items():
             item = found[target]
             check(item.get("type") == "bind" and item.get("source") == source and item.get("read_only", False) is read_only, (service, target))
-    check(services["synapse"].get("entrypoint") == ["/telecrypt-synapse-entrypoint"] and services["synapse"].get("command") == ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"], "Synapse config order")
+    check(
+        services["synapse"].get("entrypoint") == ["/telecrypt-synapse-entrypoint"]
+        and services["synapse"].get("command")
+        == ["-c", "/homeserver.yaml", "-c", "/synapse-environment.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
+        "Synapse config order",
+    )
     check(services["mas"].get("command") == ["server", "--config=/config.yaml", "--config=/secrets.json", "--config=/runtime-identity.yaml"], "MAS config order")
     check(services["janitor"].get("command") == ["/janitor"] and services["plan"].get("command") == ["/plan"], "service commands")
     for service in ("caddy", "mas", "registration", "janitor", "plan", "cashier"):

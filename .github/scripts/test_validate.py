@@ -126,6 +126,43 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate.validate_synapse_prejoin_state(candidate)
 
+    def test_synapse_environment_profiles_are_closed_rc_message_only_and_exact(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        validate.validate_synapse_environment_profiles()
+        self.assertEqual(
+            validate.SYNAPSE_ENVIRONMENT_FILES,
+            {
+                "telecrypt.io": "synapse.telecrypt.io.yaml",
+                "stage.telecrypt.io": "synapse.stage.telecrypt.io.yaml",
+            },
+        )
+        self.assertEqual(validate.synapse_environment_path("telecrypt.io"), root / "synapse.telecrypt.io.yaml")
+        self.assertEqual(validate.synapse_environment_path("stage.telecrypt.io"), root / "synapse.stage.telecrypt.io.yaml")
+        for invalid in ("", "telecrypt.io.evil", "stage.telecrypt.io.evil"):
+            with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                validate.synapse_environment_path(invalid)
+        expected = {
+            "telecrypt.io": {"per_second": 0.2, "burst_count": 10},
+            "stage.telecrypt.io": {"per_second": 1000, "burst_count": 1000},
+        }
+        for server_name, filename in validate.SYNAPSE_ENVIRONMENT_FILES.items():
+            document = yaml.safe_load((root / filename).read_text(encoding="utf-8"))
+            self.assertEqual(document, {"rc_message": expected[server_name]})
+
+        compose = (root / "compose.yml").read_text(encoding="utf-8")
+        synapse = validate.service_section(compose, "synapse")
+        self.assertIn("./synapse.${SERVER_NAME:?set SERVER_NAME}.yaml:/synapse-environment.yaml:ro", synapse)
+        self.assertIn(
+            'command: ["-c", "/homeserver.yaml", "-c", "/synapse-environment.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]',
+            synapse,
+        )
+
+        invalid_values = dict(validate.SYNAPSE_ENVIRONMENT_VALUES)
+        invalid_values["stage.telecrypt.io"] = {"per_second": 1, "burst_count": 1}
+        with mock.patch.object(validate, "SYNAPSE_ENVIRONMENT_VALUES", invalid_values):
+            with self.assertRaises(AssertionError):
+                validate.validate_synapse_environment_profiles()
+
     def test_synapse_mas_peer_is_internal_and_egress_isolated(self) -> None:
         compose = (Path(__file__).resolve().parents[2] / "compose.yml").read_text(encoding="utf-8")
         self.assertEqual(validate.EGRESS_NETWORKS["synapse"], "synapse_egress_net")
@@ -337,6 +374,13 @@ class ManifestTests(unittest.TestCase):
         self.assertNotIn("s3.telecrypt.io", synapse + workflow + readme)
         self.assertRegex(signing_fixture, r"\Aed25519 0 [A-Za-z0-9+/]{43}\n\Z")
         self.assertIn("config check --config=/config.yaml --config=/secrets.json", workflow)
+        self.assertIn(
+            '["-c", "/homeserver.yaml", "-c", profile_path, "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]',
+            workflow,
+        )
+        self.assertIn("rc_message.per_second, rc_message.burst_count", workflow)
+        self.assertIn('("/synapse-environment.yaml", (1000, 1000))', workflow)
+        self.assertIn('("/synapse-production-environment.yaml", (0.2, 10))', workflow)
         self.assertIn('"client_auth_method":"client_secret_basic"', mas_fixture)
         self.assertNotIn('"transport":"disabled"', workflow)
         self.assertNotIn("SYNAPSE_SECRETS_YAML", workflow)
@@ -1249,6 +1293,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             "config-media",
             "config-listeners",
             "config-unknown",
+            "profile-values",
             "file-not-found",
             "permission",
             "module-import",
@@ -1293,6 +1338,14 @@ class ReleaseEvidenceTests(unittest.TestCase):
             self.assertNotIn("networks", proof_services[proof_name])
             self.assertNotIn("depends_on", proof_services[proof_name])
         self.assertNotIn("volumes", proof_services["synapse-secret-proof"])
+        self.assertIn(
+            "../synapse.${SERVER_NAME:?set SERVER_NAME}.yaml:/synapse-environment.yaml:ro",
+            proof_services["synapse-loader-proof"]["volumes"],
+        )
+        self.assertIn(
+            "../synapse.telecrypt.io.yaml:/synapse-production-environment.yaml:ro",
+            proof_services["synapse-loader-proof"]["volumes"],
+        )
         self.assertEqual(
             proof_services["synapse-loader-proof"]["tmpfs"],
             [

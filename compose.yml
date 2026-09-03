@@ -85,12 +85,15 @@ services:
     user: "991:991"
     tmpfs:
       - /tmp:uid=991,gid=991,mode=1777,size=16m
-    # Bypass the image's start.py so we can merge public base, private config, and SERVER_NAME-derived
-    # runtime identity last; the final layer owns the public identity fields.
+    # Bypass the image's start.py so we can merge the committed base, the exact SERVER_NAME-selected
+    # nonsecret profile, private config, and SERVER_NAME-derived runtime identity last; the final
+    # layer owns the public identity fields. SERVER_NAME is strictly validated before activation,
+    # so the profile path resolves to one of the two tracked files in this repository.
     entrypoint: ["/telecrypt-synapse-entrypoint"]
-    command: ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]
+    command: ["-c", "/homeserver.yaml", "-c", "/synapse-environment.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"]
     volumes:
       - ./synapse.yaml:/homeserver.yaml:ro
+      - ./synapse.${SERVER_NAME:?set SERVER_NAME}.yaml:/synapse-environment.yaml:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse.identity.yaml:/runtime-identity.yaml:ro
       - ./synapse.log.config:/log.config:ro
       - ${TELECRYPT_DATA_DIR:?set TELECRYPT_DATA_DIR}/runtime/synapse-staging:/staging:rw

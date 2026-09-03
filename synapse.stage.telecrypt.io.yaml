@@ -1,0 +1,5 @@
+# Synapse stage profile. Keep the finite limiter high enough for parallel acceptance tests while
+# retaining a bounded request budget; secrets, database/provider maps, and identity stay separate.
+rc_message:
+  per_second: 1000
+  burst_count: 1000

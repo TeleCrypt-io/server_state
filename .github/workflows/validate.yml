@@ -320,6 +320,9 @@ jobs:
           set -euo pipefail
           source .github/scripts/container-helpers.sh
           mkdir -p "$TELECRYPT_DATA_DIR/runtime"
+          # .env.example selects the stage profile for this CI proof. The source validator proves
+          # the closed production/stage map; this container proof loads both tracked profiles and
+          # proves their values in the explicit base → environment → secrets → identity order.
           printf '%s\n' 'server_name: stage.telecrypt.io' 'public_baseurl: https://backend.stage.telecrypt.io/' > "$TELECRYPT_DATA_DIR/runtime/synapse.identity.yaml"
           printf '%s\n' 'http:' '  public_base: https://backend.stage.telecrypt.io/auth/' '  issuer: https://backend.stage.telecrypt.io/auth/' > "$TELECRYPT_DATA_DIR/runtime/mas.identity.yaml"
           synapse_loader_output="$RUNNER_TEMP/synapse-json-loader.log"
@@ -372,13 +375,23 @@ jobs:
                   from synapse.config._base import ConfigError
                   from synapse.config.homeserver import HomeServerConfig
                   try:
-                      config = HomeServerConfig.load_config(
-                          "Synapse JSON loader proof",
-                          ["-c", "/homeserver.yaml", "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
-                      )
-                      if config is None:
-                          raise LoaderFailure
-                      marker = "success"
+                      for profile_path, expected_limits in (
+                          ("/synapse-environment.yaml", (1000, 1000)),
+                          ("/synapse-production-environment.yaml", (0.2, 10)),
+                      ):
+                          config = HomeServerConfig.load_config(
+                              "Synapse JSON loader proof",
+                              ["-c", "/homeserver.yaml", "-c", profile_path, "-c", "/secrets.json", "-c", "/runtime-identity.yaml"],
+                          )
+                          server_name = getattr(getattr(config, "server", None), "server_name", None)
+                          rc_message = getattr(getattr(config, "ratelimiting", None), "rc_message", None)
+                          if config is None or server_name != "stage.telecrypt.io" or rc_message is None or (
+                              rc_message.per_second, rc_message.burst_count
+                          ) != expected_limits:
+                              marker = "profile-values"
+                              break
+                      else:
+                          marker = "success"
                   except ConfigError as error:
                       marker = config_marker(error)
                   except FileNotFoundError:
@@ -433,7 +446,7 @@ jobs:
             telecrypt-synapse-loader:config-listeners|telecrypt-synapse-loader:config-unknown|\
             telecrypt-synapse-loader:file-not-found|telecrypt-synapse-loader:permission|\
             telecrypt-synapse-loader:module-import|telecrypt-synapse-loader:parser-exit|\
-            telecrypt-synapse-loader:unexpected)
+            telecrypt-synapse-loader:profile-values|telecrypt-synapse-loader:unexpected)
               synapse_loader_failure "${synapse_loader_marker#telecrypt-synapse-loader:}"
               ;;
             *)

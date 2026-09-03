@@ -1,0 +1,5 @@
+# Synapse production profile. This file is deliberately limited to the explicit production
+# request limiter; secrets, database/provider maps, and public identity remain in their own layers.
+rc_message:
+  per_second: 0.2
+  burst_count: 10

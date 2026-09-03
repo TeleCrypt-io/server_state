@@ -39,9 +39,14 @@ The Matrix private inputs are `${TELECRYPT_DATA_DIR}/secrets/synapse.secrets.jso
 `${TELECRYPT_DATA_DIR}/secrets/synapse_signing.key`, and `${TELECRYPT_DATA_DIR}/secrets/mas.secrets.json`;
 Harness validates their bounded contracts before passing them as file-backed Compose secrets; the
 signing key is mounted as `/signing.key`. The MAS overlay contains its encryption/signing secrets,
-database URI, Matrix shared secret, and two exact environment-bound clients. Synapse's config files
-are shallow-merged by top-level key, so its private overlay owns each complete `database` and
-`matrix_authentication_service` map; the committed base has no partial map that could overwrite it.
+database URI, Matrix shared secret, and two exact environment-bound clients. Synapse loads the
+committed base, then the exact tracked nonsecret profile selected by `SERVER_NAME`, then its private
+JSON overlay, and finally the runtime identity layer. The two profile files contain only the explicit
+`rc_message` limiter: production keeps Synapse's standard `per_second: 0.2` and `burst_count: 10`,
+while stage uses finite `per_second: 1000` and `burst_count: 1000` values for parallel acceptance
+tests. Synapse's config files are shallow-merged by top-level key, so its private overlay owns each
+complete `database` and `matrix_authentication_service` map; the committed base and profile contain
+no partial map that could overwrite it.
 Email and policy defaults remain in `mas.yaml`; the final runtime identity layer supplies the Janitor
 admin-client ID. The committed base configs retain reviewed nonsecret loader options, while
 credentials, database URIs, OAuth client secrets, and provider values remain outside this repository.
